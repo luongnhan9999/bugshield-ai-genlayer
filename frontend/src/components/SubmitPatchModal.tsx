@@ -26,7 +26,7 @@ export const SubmitPatchModal: React.FC<SubmitPatchModalProps> = ({
 
   if (!isOpen || !bounty) return null;
 
-  // Judge Demo Quick Fill: Valid Patch (Triggers AI Approval)
+  // Judge Demo Quick Fill: Valid Patch (Triggers AI Approval & Instant Payout)
   const handleQuickFillValid = () => {
     setPrUrl(`https://github.com/bugshield-ai/demo-repo/pull/${Math.floor(Math.random() * 100) + 20}`);
     setPatchCode(`// Valid Security Patch Fix
@@ -52,7 +52,7 @@ contract VaultEscrow is ReentrancyGuard {
 }`);
   };
 
-  // Judge Demo Quick Fill: Invalid Patch (Triggers AI Rejection)
+  // Judge Demo Quick Fill: Invalid Patch (Triggers AI Rejection without Locking Escrow)
   const handleQuickFillInvalid = () => {
     setPrUrl(`https://github.com/bugshield-ai/demo-repo/pull/${Math.floor(Math.random() * 100) + 20}`);
     setPatchCode(`// Incomplete Patch - Missing reentrancy guard or state checks
@@ -93,13 +93,19 @@ contract VaultEscrow {
         const isSuccess = result.evalResult.is_valid;
         const updatedBounty: Bounty = {
           ...bounty,
-          status: isSuccess ? 1 : 0,
+          status: isSuccess ? 1 : 0, // 1 = RESOLVED, 0 = OPEN (Never stuck in locked state)
           winner: isSuccess ? account : bounty.winner,
           ai_verdict_reason: result.evalResult.reason,
           patch_pr_url: prUrl,
         };
 
         onPatchEvaluated(bounty.id, updatedBounty);
+
+        if (isSuccess) {
+          alert(`✅ ON-CHAIN VALIDATOR CONSENSUS PASSED!\n\nPatch approved by GenLayer AI VM. Reward payout disbursed. Tx: ${result.txHash}`);
+        } else {
+          alert(`❌ ON-CHAIN VALIDATOR CONSENSUS REJECTED!\n\nPatch failed security evaluation. Bounty remains OPEN for resubmission or refund. Tx: ${result.txHash}`);
+        }
       } else {
         // Fallback simulation when wallet not connected
         setAuditStep("Step 1/3: Broadcasting Patch to GenLayer Validators...");
@@ -120,7 +126,7 @@ contract VaultEscrow {
 
         const verdictReason = isSuccess
           ? `VALIDATOR CONSENSUS PASSED: The submitted security patch eliminates the vulnerability by introducing proper guards/access checks. Acceptance criteria met. Escrow of ${bounty.reward_amount} GEN disbursed.`
-          : `VALIDATOR CONSENSUS REJECTED: The submitted diff lacks explicit security guards or access control checks matching acceptance criteria. Security flaw remains active.`;
+          : `VALIDATOR CONSENSUS REJECTED: The submitted diff lacks explicit security guards or access control checks matching acceptance criteria. Bounty remains OPEN for resubmission or refund.`;
 
         const updatedBounty: Bounty = {
           ...bounty,
@@ -131,6 +137,12 @@ contract VaultEscrow {
         };
 
         onPatchEvaluated(bounty.id, updatedBounty);
+
+        if (isSuccess) {
+          alert(`✅ DEMO CONSENSUS PASSED!\n\nPatch verified. Reward disbursed.`);
+        } else {
+          alert(`❌ DEMO CONSENSUS REJECTED!\n\nPatch failed checks. Bounty remains OPEN for resubmission or refund.`);
+        }
       }
 
       onClose();
@@ -174,7 +186,7 @@ contract VaultEscrow {
           <div className="mb-4 p-3 bg-slate-900 border border-cyan-500/30 rounded-xl space-y-2">
             <div className="text-xs text-cyan-300 font-bold flex items-center">
               <Zap className="w-3.5 h-3.5 mr-1 text-amber-400 fill-current" />
-              Judge Fast-Test Demo Options:
+              Judge 2-Way Fast-Test Demo Buttons:
             </div>
             <div className="flex flex-wrap gap-2">
               <button
@@ -183,7 +195,7 @@ contract VaultEscrow {
                 className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-semibold flex items-center transition-colors"
               >
                 <CheckCircle2 className="w-3.5 h-3.5 mr-1 text-emerald-400" />
-                Fill Valid Patch (Auto-Approve)
+                1-Way: Valid Patch (Auto-Approve & Payout)
               </button>
               <button
                 type="button"
@@ -191,7 +203,7 @@ contract VaultEscrow {
                 className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded-lg text-xs font-semibold flex items-center transition-colors"
               >
                 <XCircle className="w-3.5 h-3.5 mr-1 text-rose-400" />
-                Fill Invalid Patch (Trigger Reject)
+                2-Way: Invalid Patch (Reject & Keep Open)
               </button>
             </div>
           </div>
