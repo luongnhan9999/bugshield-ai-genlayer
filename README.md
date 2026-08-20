@@ -1,4 +1,4 @@
-# 🛡️ BugShield AI — Decentralized Security Audit Bounties on GenLayer Testnet
+# 🛡️ BugShield AI — Decentralized Security Audit Bounties on GenLayer
 
 **BugShield AI** is an intelligent security bounty platform built on **GenLayer**. It enables Web3 projects to post smart contract vulnerability bounties backed by native token escrows. When security hunters submit code patches and GitHub Pull Requests, GenLayer Validators execute on-chain LLM consensus prompts (`gl.exec_prompt`) to independently audit the patch code and automatically disburse rewards upon validation.
 
@@ -55,7 +55,7 @@ bugshield-ai-genlayer/
 ## ⚙️ Smart Contract: `contracts/bug_shield.py`
 
 The contract is written in Python for the GenLayer VM:
-- Address: `0x21Cf1E82bFE4B1777bD3359F9fE8Eb47c972ca85`
+- Deployed Contract Address: `0x21Cf1E82bFE4B1777bD3359F9fE8Eb47c972ca85`
 - Explorer: `https://genlayer-explorer.vercel.app/address/0x21Cf1E82bFE4B1777bD3359F9fE8Eb47c972ca85`
 - `create_bounty(...)`: Locks native token value in contract escrow.
 - `submit_and_evaluate_patch(...)`: Triggers `gl.exec_prompt(audit_prompt)` across GenLayer validators.
