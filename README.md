@@ -1,6 +1,14 @@
 # 🛡️ BugShield AI — Decentralized Security Audit Bounties on GenLayer Testnet
 
-**BugShield AI** is an intelligent security bounty platform built on the **GenLayer Testnet**. It enables Web3 projects to post smart contract vulnerability bounties backed by native token escrows. When security hunters submit code patches and GitHub Pull Requests, GenLayer Validators execute on-chain LLM consensus prompts (`gl.exec_prompt`) to independently audit the patch code and automatically disburse rewards upon validation.
+**BugShield AI** is an intelligent security bounty platform built on **GenLayer**. It enables Web3 projects to post smart contract vulnerability bounties backed by native token escrows. When security hunters submit code patches and GitHub Pull Requests, GenLayer Validators execute on-chain LLM consensus prompts (`gl.exec_prompt`) to independently audit the patch code and automatically disburse rewards upon validation.
+
+---
+
+## 🌐 Live App & Smart Contract
+
+- **Live App:** [https://bugshield-ai-genlayer.vercel.app](https://bugshield-ai-genlayer.vercel.app)
+- **Deployed Contract (Studionet):** [`0x21Cf1E82bFE4B1777bD3359F9fE8Eb47c972ca85`](https://genlayer-explorer.vercel.app/address/0x21Cf1E82bFE4B1777bD3359F9fE8Eb47c972ca85)
+- **GenLayer Block Explorer:** [https://genlayer-explorer.vercel.app/address/0x21Cf1E82bFE4B1777bD3359F9fE8Eb47c972ca85](https://genlayer-explorer.vercel.app/address/0x21Cf1E82bFE4B1777bD3359F9fE8Eb47c972ca85)
 
 ---
 
@@ -17,7 +25,7 @@
 ## 📁 Repository Structure
 
 ```
-bugshield-ai/
+bugshield-ai-genlayer/
 ├── contracts/
 │   └── bug_shield.py              # GenLayer Python Intelligent Contract
 ├── scripts/
@@ -37,8 +45,7 @@ bugshield-ai/
 │   │   └── lib/
 │   │       └── genlayer.ts        # RPC connector & Web3 wallet helper
 │   ├── package.json               # Dependencies (Next.js 14, Tailwind, Lucide)
-│   ├── next.config.mjs            # Next.js configuration
-│   └── .env.example               # Environment variables example
+│   └── .env                       # Contract address & RPC config
 ├── genlayer.config.json           # GenLayer Testnet RPC configuration
 └── README.md                      # Documentation & deployment guide
 ```
@@ -48,9 +55,11 @@ bugshield-ai/
 ## ⚙️ Smart Contract: `contracts/bug_shield.py`
 
 The contract is written in Python for the GenLayer VM:
+- Address: `0x21Cf1E82bFE4B1777bD3359F9fE8Eb47c972ca85`
+- Explorer: `https://genlayer-explorer.vercel.app/address/0x21Cf1E82bFE4B1777bD3359F9fE8Eb47c972ca85`
 - `create_bounty(...)`: Locks native token value in contract escrow.
 - `submit_and_evaluate_patch(...)`: Triggers `gl.exec_prompt(audit_prompt)` across GenLayer validators.
-- `get_bounty(bounty_id)` & `get_bounty_count()`: View contract state.
+- `cancel_bounty(...)`: Refunds escrow to creator after time-lock expiry.
 
 ---
 
@@ -60,7 +69,7 @@ The contract is written in Python for the GenLayer VM:
 - Node.js 18+ & npm
 - Python 3.10+
 
-### 2. Run Next.js Frontend Locally
+### 2. Run Frontend Locally
 ```bash
 cd frontend
 npm install
@@ -70,49 +79,9 @@ Open `http://localhost:3000` in your browser.
 
 ---
 
-## 📜 Deploying Contract to GenLayer Testnet
-
-To deploy `contracts/bug_shield.py` to GenLayer Testnet:
-
-```bash
-# Set your GenLayer Private Key
-export GENLAYER_PRIVATE_KEY="0xYOUR_PRIVATE_KEY"
-export GENLAYER_RPC_URL="https://testnet-rpc.genlayer.com"
-
-# Run deployment script
-python scripts/deploy.py
-```
-
----
-
-## 🌐 1-Click Deployment to Vercel
-
-### Step 1: Push to GitHub
-```bash
-git init
-git add .
-git commit -m "Initial commit: BugShield AI fullstack Web3"
-git remote add origin https://github.com/YOUR_USERNAME/bugshield-ai.git
-git push -u origin main
-```
-
-### Step 2: Deploy on Vercel
-1. Log in to [Vercel Dashboard](https://vercel.com).
-2. Click **New Project** and import your `bugshield-ai` GitHub repository.
-3. Set **Root Directory** to `frontend`.
-4. Configure **Environment Variables**:
-   - `NEXT_PUBLIC_GENLAYER_RPC` = `https://testnet-rpc.genlayer.com`
-   - `NEXT_PUBLIC_GENLAYER_CHAIN_ID` = `61999`
-   - `NEXT_PUBLIC_CONTRACT_ADDRESS` = `0xYOUR_DEPLOYED_CONTRACT_ADDRESS`
-5. Click **Deploy**.
-
----
-
 ## 🚰 GenLayer Testnet Faucet & Token Guide
 
 1. Network RPC: `https://testnet-rpc.genlayer.com`
 2. Chain ID: `61999`
 3. Native Symbol: `GEN`
 4. Faucet URL: [https://faucet.genlayer.com](https://faucet.genlayer.com)
-
-To request testnet tokens, connect your MetaMask wallet to GenLayer Testnet and claim testnet GEN tokens from the faucet to create real on-chain bounties.
