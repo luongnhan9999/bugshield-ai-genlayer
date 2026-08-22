@@ -22,7 +22,7 @@ import {
 interface BountyCardProps {
   bounty: Bounty;
   onOpenSubmitModal: (bounty: Bounty) => void;
-  onBountyCancelled?: (bountyId: number) => void;
+  onBountyCancelled?: (bountyId: string, updatedBounty: Bounty | null) => void;
   currentAccount?: string | null;
 }
 
@@ -33,7 +33,7 @@ export const BountyCard: React.FC<BountyCardProps> = ({
   currentAccount,
 }) => {
   const [showAiReasoning, setShowAiReasoning] = useState<boolean>(
-    bounty.status === 1 || Boolean(bounty.ai_verdict_reason)
+    bounty.status === "RESOLVED" || Boolean(bounty.ai_verdict_reason)
   );
   const [isCancelling, setIsCancelling] = useState(false);
 
@@ -49,12 +49,15 @@ export const BountyCard: React.FC<BountyCardProps> = ({
     try {
       if (currentAccount && typeof window !== "undefined" && window.ethereum) {
         const res = await cancelBountyOnChain(bounty.id, currentAccount);
-        alert(`On-Chain Cancellation Tx Sent! Tx Hash: ${res.txHash}`);
+        alert(`On-Chain Cancellation Tx Confirmed! Tx Hash: ${res.txHash}`);
+        if (onBountyCancelled) {
+          onBountyCancelled(bounty.id, res.updatedBounty);
+        }
       } else {
         await new Promise((res) => setTimeout(res, 1000));
-      }
-      if (onBountyCancelled) {
-        onBountyCancelled(bounty.id);
+        if (onBountyCancelled) {
+          onBountyCancelled(bounty.id, null);
+        }
       }
     } catch (err: any) {
       console.error("Error cancelling bounty:", err);
@@ -66,20 +69,21 @@ export const BountyCard: React.FC<BountyCardProps> = ({
 
   const getStatusBadge = () => {
     switch (bounty.status) {
-      case 1:
+      case "RESOLVED":
         return (
           <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
             <CheckCircle2 className="w-3.5 h-3.5 mr-1 text-emerald-400" />
             RESOLVED & PAID
           </span>
         );
-      case 2:
+      case "CANCELLED":
         return (
           <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-slate-500/10 text-slate-400 border border-slate-500/20">
             <XCircle className="w-3.5 h-3.5 mr-1 text-slate-400" />
             CANCELLED & REFUNDED
           </span>
         );
+      case "OPEN":
       default:
         return (
           <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
@@ -200,7 +204,7 @@ export const BountyCard: React.FC<BountyCardProps> = ({
           Creator: {bounty.creator.slice(0, 6)}...{bounty.creator.slice(-4)}
         </div>
 
-        {bounty.status === 0 ? (
+        {bounty.status === "OPEN" ? (
           <div className="flex items-center space-x-2">
             {isCreator && (
               <button
@@ -224,7 +228,7 @@ export const BountyCard: React.FC<BountyCardProps> = ({
         ) : (
           <span className="inline-flex items-center text-xs text-slate-500 font-medium">
             <Lock className="w-3.5 h-3.5 mr-1 text-slate-500" />
-            Bounty Closed
+            Bounty Closed ({bounty.status})
           </span>
         )}
       </div>

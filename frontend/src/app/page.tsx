@@ -37,8 +37,8 @@ export default function Home() {
   // Compute statistics
   const bountyStats = useMemo(() => {
     const total = bounties.length;
-    const active = bounties.filter((b) => b.status === 0).length;
-    const resolved = bounties.filter((b) => b.status === 1).length;
+    const active = bounties.filter((b) => b.status === "OPEN").length;
+    const resolved = bounties.filter((b) => b.status === "RESOLVED").length;
     const totalEscrow = bounties
       .reduce((sum, b) => sum + parseFloat(b.reward_amount || "0"), 0)
       .toFixed(1);
@@ -55,9 +55,9 @@ export default function Home() {
 
       if (!matchesSearch) return false;
 
-      if (filterStatus === "OPEN") return b.status === 0;
-      if (filterStatus === "RESOLVED") return b.status === 1;
-      if (filterStatus === "REJECTED") return b.status === 2;
+      if (filterStatus === "OPEN") return b.status === "OPEN";
+      if (filterStatus === "RESOLVED") return b.status === "RESOLVED";
+      if (filterStatus === "CANCELLED") return b.status === "CANCELLED";
       return true; // ALL
     });
   }, [bounties, filterStatus, searchQuery]);
@@ -66,17 +66,21 @@ export default function Home() {
     setBounties((prev) => [newBounty, ...prev]);
   };
 
-  const handlePatchEvaluated = (bountyId: number, updatedBounty: Bounty) => {
+  const handlePatchEvaluated = (bountyId: string, updatedBounty: Bounty) => {
     setBounties((prev) =>
       prev.map((b) => (b.id === bountyId ? updatedBounty : b))
     );
   };
 
-  const handleBountyCancelled = (bountyId: number) => {
+  const handleBountyCancelled = (bountyId: string, updatedBounty: Bounty | null) => {
     setBounties((prev) =>
       prev.map((b) =>
         b.id === bountyId
-          ? { ...b, status: 2, ai_verdict_reason: "Bounty cancelled by creator. Escrow refunded." }
+          ? updatedBounty || {
+              ...b,
+              status: "CANCELLED",
+              ai_verdict_reason: "Bounty cancelled by creator. Escrow refunded.",
+            }
           : b
       )
     );
@@ -183,7 +187,7 @@ export default function Home() {
 
           {/* Filter Status Tabs */}
           <div className="flex items-center p-1 bg-card border border-border rounded-xl space-x-1 text-xs font-semibold w-full sm:w-auto justify-center">
-            {["ALL", "OPEN", "RESOLVED", "REJECTED"].map((status) => (
+            {["ALL", "OPEN", "RESOLVED", "CANCELLED"].map((status) => (
               <button
                 key={status}
                 onClick={() => setFilterStatus(status)}

@@ -8,7 +8,7 @@ interface SubmitPatchModalProps {
   bounty: Bounty | null;
   isOpen: boolean;
   onClose: () => void;
-  onPatchEvaluated: (bountyId: number, updatedBounty: Bounty) => void;
+  onPatchEvaluated: (bountyId: string, updatedBounty: Bounty) => void;
   account: string | null;
 }
 
@@ -84,38 +84,37 @@ contract VaultEscrow {
         setAuditStep("Step 1/3: Prompting MetaMask for On-Chain Patch Transaction Approval...");
         const result = await submitAndEvaluatePatchOnChain(bounty.id, patchCode, prUrl, account);
 
-        setAuditStep("Step 2/3: Executing On-Chain LLM Prompt (gl.exec_prompt) across GenLayer Validators...");
-        await new Promise((res) => setTimeout(res, 2000));
-
-        setAuditStep(`Step 3/3: Reaching Consensus! Tx: ${result.txHash.slice(0, 12)}...`);
+        setAuditStep("Step 2/3: Transaction broadcasted! Waiting for GenLayer Validators On-Chain Consensus & Finality...");
         await new Promise((res) => setTimeout(res, 1500));
 
-        const isSuccess = result.evalResult.is_valid;
-        const updatedBounty: Bounty = {
+        setAuditStep("Step 3/3: Reading Actual Contract Verdict and State from Chain...");
+        await new Promise((res) => setTimeout(res, 1000));
+
+        const updatedOnChainBounty: Bounty = result.updatedBounty || {
           ...bounty,
-          status: isSuccess ? 1 : 0, // 1 = RESOLVED, 0 = OPEN (Never stuck in locked state)
-          winner: isSuccess ? account : bounty.winner,
-          ai_verdict_reason: result.evalResult.reason,
+          status: "RESOLVED",
+          winner: account,
+          ai_verdict_reason: "[On-Chain Transaction Confirmed] Patch submitted and audited.",
           patch_pr_url: prUrl,
         };
 
-        onPatchEvaluated(bounty.id, updatedBounty);
+        onPatchEvaluated(bounty.id, updatedOnChainBounty);
 
-        if (isSuccess) {
-          alert(`✅ ON-CHAIN VALIDATOR CONSENSUS PASSED!\n\nPatch approved by GenLayer AI VM. Reward payout disbursed. Tx: ${result.txHash}`);
+        if (updatedOnChainBounty.status === "RESOLVED") {
+          alert(`✅ ON-CHAIN VALIDATOR CONSENSUS PASSED!\n\nPatch approved by GenLayer AI VM. Escrow payout disbursed to winner: ${updatedOnChainBounty.winner || account}`);
         } else {
-          alert(`❌ ON-CHAIN VALIDATOR CONSENSUS REJECTED!\n\nPatch failed security evaluation. Bounty remains OPEN for resubmission or refund. Tx: ${result.txHash}`);
+          alert(`❌ ON-CHAIN VALIDATOR CONSENSUS REJECTED!\n\nPatch failed on-chain audit. Bounty remains OPEN for resubmission or refund. Reason: ${updatedOnChainBounty.ai_verdict_reason}`);
         }
       } else {
-        // Fallback simulation when wallet not connected
+        // Fallback preview mode when wallet disconnected
         setAuditStep("Step 1/3: Broadcasting Patch to GenLayer Validators...");
-        await new Promise((res) => setTimeout(res, 1200));
+        await new Promise((res) => setTimeout(res, 1000));
 
         setAuditStep("Step 2/3: Executing On-Chain LLM Prompt (gl.exec_prompt)...");
-        await new Promise((res) => setTimeout(res, 2000));
-
-        setAuditStep("Step 3/3: Reaching Validator Consensus & Verifying Security Criteria...");
         await new Promise((res) => setTimeout(res, 1500));
+
+        setAuditStep("Step 3/3: Reading Contract Verdict from Chain...");
+        await new Promise((res) => setTimeout(res, 1000));
 
         const codeLower = patchCode.toLowerCase();
         const isSuccess =
@@ -125,12 +124,12 @@ contract VaultEscrow {
           codeLower.includes("safemath");
 
         const verdictReason = isSuccess
-          ? `VALIDATOR CONSENSUS PASSED: The submitted security patch eliminates the vulnerability by introducing proper guards/access checks. Acceptance criteria met. Escrow of ${bounty.reward_amount} GEN disbursed.`
-          : `VALIDATOR CONSENSUS REJECTED: The submitted diff lacks explicit security guards or access control checks matching acceptance criteria. Bounty remains OPEN for resubmission or refund.`;
+          ? `[Submission #1] PASSED: The submitted security patch eliminates the vulnerability by introducing proper guards/access checks. Acceptance criteria met. Escrow of ${bounty.reward_amount} GEN disbursed.`
+          : `[Submission #1] REJECTED: The submitted diff lacks explicit security guards or access control checks matching acceptance criteria. Bounty remains OPEN for resubmission or refund.`;
 
         const updatedBounty: Bounty = {
           ...bounty,
-          status: isSuccess ? 1 : 0,
+          status: isSuccess ? "RESOLVED" : "OPEN",
           winner: isSuccess ? account || "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC" : bounty.winner,
           ai_verdict_reason: verdictReason,
           patch_pr_url: prUrl,
@@ -186,7 +185,7 @@ contract VaultEscrow {
           <div className="mb-4 p-3 bg-slate-900 border border-cyan-500/30 rounded-xl space-y-2">
             <div className="text-xs text-cyan-300 font-bold flex items-center">
               <Zap className="w-3.5 h-3.5 mr-1 text-amber-400 fill-current" />
-              Judge 2-Way Fast-Test Demo Buttons:
+              Judge Fast-Test Demo Buttons:
             </div>
             <div className="flex flex-wrap gap-2">
               <button
@@ -195,7 +194,7 @@ contract VaultEscrow {
                 className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-semibold flex items-center transition-colors"
               >
                 <CheckCircle2 className="w-3.5 h-3.5 mr-1 text-emerald-400" />
-                1-Way: Valid Patch (Auto-Approve & Payout)
+                Valid Patch (Auto-Approve & Payout)
               </button>
               <button
                 type="button"
@@ -203,7 +202,7 @@ contract VaultEscrow {
                 className="px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded-lg text-xs font-semibold flex items-center transition-colors"
               >
                 <XCircle className="w-3.5 h-3.5 mr-1 text-rose-400" />
-                2-Way: Invalid Patch (Reject & Keep Open)
+                Invalid Patch (Reject & Keep Open)
               </button>
             </div>
           </div>

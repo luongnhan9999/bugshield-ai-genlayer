@@ -5,17 +5,19 @@ declare global {
 }
 
 export interface Bounty {
-  id: number;
+  id: string; // Contract string ID (e.g. "bounty-1", "bounty-1700000000")
   creator: string;
   title: string;
   target_repo_url: string;
   vulnerability_description: string;
   expected_fix_criteria: string;
   reward_amount: string;
-  status: 0 | 1 | 2; // 0 = OPEN, 1 = RESOLVED, 2 = CANCELLED
+  status: "OPEN" | "RESOLVED" | "CANCELLED"; // Contract string status enum
   winner: string;
   ai_verdict_reason: string;
   patch_pr_url: string;
+  created_at?: string;
+  submission_count?: string;
 }
 
 export const GENLAYER_TESTNET_CONFIG = {
@@ -34,10 +36,10 @@ export const GENLAYER_TESTNET_CONFIG = {
 export const CONTRACT_ADDRESS =
   process.env.VITE_CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "0x39CA47Ec65a6d390AC220f20014D6a8Ecd972ECA";
 
-// Seed bounties for fallback preview
+// Seed bounties aligned with contract string IDs & string statuses
 export const INITIAL_BOUNTIES: Bounty[] = [
   {
-    id: 0,
+    id: "bounty-1",
     creator: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
     title: "Reentrancy Vulnerability in Vault Escrow Payout",
     target_repo_url: "https://github.com/bugshield-ai/demo-vault",
@@ -46,14 +48,15 @@ export const INITIAL_BOUNTIES: Bounty[] = [
     expected_fix_criteria:
       "Implement ReentrancyGuard nonReentrant modifier or apply Checks-Effects-Interactions pattern by setting internal balances to zero before balance transfer.",
     reward_amount: "5.0",
-    status: 1, // RESOLVED
+    status: "RESOLVED",
     winner: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
     ai_verdict_reason:
-      "VALIDATOR CONSENSUS AUDIT: The submitted patch strictly implements the nonReentrant modifier and updates balance states before calling transfer(). Zero secondary security flaws detected. Payout approved.",
+      "[Submission #1] PASSED: The submitted patch strictly implements the nonReentrant modifier and updates balance states before calling transfer(). Zero secondary security flaws detected. Payout approved.",
     patch_pr_url: "https://github.com/bugshield-ai/demo-vault/pull/12",
+    submission_count: "1",
   },
   {
-    id: 1,
+    id: "bounty-2",
     creator: "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
     title: "Integer Overflow in Staking Reward Calculator",
     target_repo_url: "https://github.com/bugshield-ai/staking-rewards",
@@ -62,13 +65,14 @@ export const INITIAL_BOUNTIES: Bounty[] = [
     expected_fix_criteria:
       "Scale calculations using OpenZeppelin Math library or SafeMath with proper precision division ordering.",
     reward_amount: "2.5",
-    status: 0, // OPEN
+    status: "OPEN",
     winner: "",
-    ai_verdict_reason: "",
+    ai_verdict_reason: "Awaiting Submissions",
     patch_pr_url: "",
+    submission_count: "0",
   },
   {
-    id: 2,
+    id: "bounty-3",
     creator: "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
     title: "Unrestricted Owner Access in Emergency Withdrawal",
     target_repo_url: "https://github.com/bugshield-ai/dao-governance",
@@ -77,10 +81,11 @@ export const INITIAL_BOUNTIES: Bounty[] = [
     expected_fix_criteria:
       "Add AccessControl role checker or AccessControlEnumerable DEFAULT_ADMIN_ROLE constraint.",
     reward_amount: "10.0",
-    status: 0, // OPEN
+    status: "OPEN",
     winner: "",
-    ai_verdict_reason: "",
+    ai_verdict_reason: "Awaiting Submissions",
     patch_pr_url: "",
+    submission_count: "0",
   },
 ];
 
@@ -137,7 +142,80 @@ export async function connectWallet(): Promise<string | null> {
 }
 
 /**
- * Send real on-chain transaction to create bounty with native GEN token value on GenLayer Testnet
+ * Poll RPC to wait for on-chain transaction finality
+ */
+export async function waitForTxFinality(txHash: string): Promise<void> {
+  const rpcUrl = process.env.NEXT_PUBLIC_GENLAYER_RPC || "https://testnet-rpc.genlayer.com";
+  const startTime = Date.now();
+  // Poll for up to 30 seconds for finality
+  while (Date.now() - startTime < 30000) {
+    try {
+      const res = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "eth_getTransactionReceipt",
+          params: [txHash],
+          id: Date.now(),
+        }),
+      });
+      const data = await res.json();
+      if (data.result) {
+        return;
+      }
+    } catch (e) {
+      // Keep polling until receipt is confirmed
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
+/**
+ * Read single bounty state directly from contract state on-chain
+ */
+export async function getBountyFromRPC(bountyId: string): Promise<Bounty | null> {
+  const rpcUrl = process.env.NEXT_PUBLIC_GENLAYER_RPC || "https://testnet-rpc.genlayer.com";
+  try {
+    const res = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "gen_getContractState",
+        params: [CONTRACT_ADDRESS],
+        id: Date.now(),
+      }),
+    });
+
+    const data = await res.json();
+    if (data.result && data.result.bounties && data.result.bounties[bountyId]) {
+      const raw = data.result.bounties[bountyId];
+      return {
+        id: String(raw.id || bountyId),
+        creator: String(raw.creator || ""),
+        title: String(raw.title || ""),
+        target_repo_url: String(raw.target_repo_url || ""),
+        vulnerability_description: String(raw.vulnerability_description || ""),
+        expected_fix_criteria: String(raw.expected_fix_criteria || ""),
+        reward_amount: String(raw.reward_amount || "0"),
+        status: String(raw.status || "OPEN") as "OPEN" | "RESOLVED" | "CANCELLED",
+        winner: String(raw.winner || ""),
+        ai_verdict_reason: String(raw.ai_verdict_reason || ""),
+        patch_pr_url: String(raw.patch_pr_url || ""),
+        created_at: String(raw.created_at || "0"),
+        submission_count: String(raw.submission_count || "0"),
+      };
+    }
+  } catch (err) {
+    console.warn("RPC getBountyFromRPC query warning:", err);
+  }
+  return null;
+}
+
+/**
+ * Send real on-chain transaction to create bounty with native GEN token value.
+ * Matches full contract signature: create_bounty(bounty_id: str, title: str, target_repo_url: str, vulnerability_description: str, expected_fix_criteria: str)
  */
 export async function createBountyOnChain(
   title: string,
@@ -151,14 +229,16 @@ export async function createBountyOnChain(
     throw new Error("No Web3 wallet provider available");
   }
 
+  const bountyId = "bounty-" + Date.now();
   const parsedVal = parseFloat(rewardAmountGen.toString().replace(",", "."));
   const numVal = isNaN(parsedVal) ? 1.0 : parsedVal;
   const weiAmount = BigInt(Math.floor(numVal * 1e18));
   const hexValue = "0x" + weiAmount.toString(16);
 
+  // Full contract method signature: create_bounty(bounty_id, title, target_repo_url, vulnerability_description, expected_fix_criteria)
   const payload = {
     method: "create_bounty",
-    args: [title, targetRepoUrl, vulnerabilityDescription, expectedFixCriteria],
+    args: [bountyId, title, targetRepoUrl, vulnerabilityDescription, expectedFixCriteria],
   };
   const dataHex = "0x" + Buffer.from(JSON.stringify(payload)).toString("hex");
 
@@ -174,32 +254,39 @@ export async function createBountyOnChain(
     ],
   })) as string;
 
-  const newBounty: Bounty = {
-    id: Date.now(),
+  // Wait for transaction finality
+  await waitForTxFinality(txHash);
+
+  // Read actual state from contract
+  const fetchedBounty = await getBountyFromRPC(bountyId);
+
+  const fallbackBounty: Bounty = {
+    id: bountyId,
     creator: account,
     title,
     target_repo_url: targetRepoUrl,
     vulnerability_description: vulnerabilityDescription,
     expected_fix_criteria: expectedFixCriteria,
     reward_amount: rewardAmountGen,
-    status: 0,
+    status: "OPEN",
     winner: "",
-    ai_verdict_reason: "",
+    ai_verdict_reason: "Awaiting Submissions",
     patch_pr_url: "",
   };
 
-  return { txHash, bounty: newBounty };
+  return { txHash, bounty: fetchedBounty || fallbackBounty };
 }
 
 /**
- * Send real on-chain transaction to submit security patch & trigger GenLayer Validator LLM consensus audit
+ * Send real on-chain transaction to submit security patch.
+ * NO local keyword checking. Waits for transaction finality and reads actual contract state on-chain!
  */
 export async function submitAndEvaluatePatchOnChain(
-  bountyId: number,
+  bountyId: string,
   patchCode: string,
   prUrl: string,
   account: string
-): Promise<{ txHash: string; evalResult: { is_valid: boolean; reason: string } }> {
+): Promise<{ txHash: string; updatedBounty: Bounty | null }> {
   if (typeof window === "undefined" || !window.ethereum) {
     throw new Error("No Web3 wallet provider available");
   }
@@ -222,30 +309,23 @@ export async function submitAndEvaluatePatchOnChain(
     ],
   })) as string;
 
-  const codeLower = patchCode.toLowerCase();
-  const isValid =
-    codeLower.includes("modifier") ||
-    codeLower.includes("reentrancyguard") ||
-    codeLower.includes("nonreentrant") ||
-    codeLower.includes("safemath");
+  // 1. Wait for transaction finality on-chain
+  await waitForTxFinality(txHash);
 
-  const reason = isValid
-    ? `REAL ON-CHAIN VALIDATOR CONSENSUS PASSED (Tx: ${txHash.slice(0, 10)}...): Security patch verified by GenLayer VM LLM prompt. Acceptance criteria satisfied. Escrow funds transferred.`
-    : `REAL ON-CHAIN VALIDATOR CONSENSUS REJECTED (Tx: ${txHash.slice(0, 10)}...): Patch lacks required security guards matching criteria. Security flaw remains active.`;
+  // 2. Read actual contract verdict and resulting state from contract (NO local keyword checking!)
+  const updatedBounty = await getBountyFromRPC(bountyId);
 
-  return {
-    txHash,
-    evalResult: { is_valid: isValid, reason },
-  };
+  return { txHash, updatedBounty };
 }
 
 /**
- * Send real on-chain transaction to cancel bounty & claim escrow refund
+ * Send real on-chain transaction to cancel bounty & claim escrow refund.
+ * Waits for transaction finality and reads updated state from contract.
  */
 export async function cancelBountyOnChain(
-  bountyId: number,
+  bountyId: string,
   account: string
-): Promise<{ txHash: string }> {
+): Promise<{ txHash: string; updatedBounty: Bounty | null }> {
   if (typeof window === "undefined" || !window.ethereum) {
     throw new Error("No Web3 wallet provider available");
   }
@@ -268,11 +348,14 @@ export async function cancelBountyOnChain(
     ],
   })) as string;
 
-  return { txHash };
+  await waitForTxFinality(txHash);
+  const updatedBounty = await getBountyFromRPC(bountyId);
+
+  return { txHash, updatedBounty };
 }
 
 /**
- * Fetch bounties state from GenLayer RPC
+ * Fetch all bounties state from GenLayer RPC
  */
 export async function getBountiesFromRPC(): Promise<Bounty[]> {
   try {
@@ -290,7 +373,22 @@ export async function getBountiesFromRPC(): Promise<Bounty[]> {
 
     const data = await res.json();
     if (data.result && data.result.bounties) {
-      return Object.values(data.result.bounties) as Bounty[];
+      const rawList = Object.values(data.result.bounties) as any[];
+      return rawList.map((b) => ({
+        id: String(b.id),
+        creator: String(b.creator),
+        title: String(b.title),
+        target_repo_url: String(b.target_repo_url),
+        vulnerability_description: String(b.vulnerability_description),
+        expected_fix_criteria: String(b.expected_fix_criteria),
+        reward_amount: String(b.reward_amount),
+        status: String(b.status) as "OPEN" | "RESOLVED" | "CANCELLED",
+        winner: String(b.winner || ""),
+        ai_verdict_reason: String(b.ai_verdict_reason || ""),
+        patch_pr_url: String(b.patch_pr_url || ""),
+        created_at: String(b.created_at || "0"),
+        submission_count: String(b.submission_count || "0"),
+      }));
     }
   } catch (err) {
     console.warn("Using local state fallback.", err);

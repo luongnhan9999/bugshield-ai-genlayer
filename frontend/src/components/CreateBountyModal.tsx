@@ -61,23 +61,25 @@ export const CreateBountyModal: React.FC<CreateBountyModalProps> = ({
           rewardAmount,
           account
         );
-        setTxNotice(`On-chain transaction sent! Hash: ${result.txHash.slice(0, 12)}...`);
+        setTxNotice(`On-chain transaction confirmed! Hash: ${result.txHash.slice(0, 12)}... Reading contract state...`);
         await new Promise((res) => setTimeout(res, 1000));
         onBountyCreated(result.bounty);
       } else {
         // Fallback preview mode when wallet disconnected
+        const fallbackId = "bounty-" + Date.now();
         const createdBounty: Bounty = {
-          id: Date.now(),
+          id: fallbackId,
           creator: account || "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
           title,
           target_repo_url: targetRepoUrl,
           vulnerability_description: vulnerabilityDescription,
           expected_fix_criteria: expectedFixCriteria,
           reward_amount: rewardAmount || "1.0",
-          status: 0,
+          status: "OPEN",
           winner: "",
-          ai_verdict_reason: "",
+          ai_verdict_reason: "Awaiting Submissions",
           patch_pr_url: "",
+          submission_count: "0",
         };
         await new Promise((resolve) => setTimeout(resolve, 1000));
         onBountyCreated(createdBounty);
