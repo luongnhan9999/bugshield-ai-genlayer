@@ -7,8 +7,8 @@
 ## 🌐 Live App & Smart Contract
 
 - **Live App:** [https://bugshield-ai-genlayer.vercel.app](https://bugshield-ai-genlayer.vercel.app)
-- **Deployed Contract (Studionet):** [`0x39CA47Ec65a6d390AC220f20014D6a8Ecd972ECA`](https://genlayer-explorer.vercel.app/address/0x39CA47Ec65a6d390AC220f20014D6a8Ecd972ECA)
-- **GenLayer Block Explorer:** [https://genlayer-explorer.vercel.app/address/0x39CA47Ec65a6d390AC220f20014D6a8Ecd972ECA](https://genlayer-explorer.vercel.app/address/0x39CA47Ec65a6d390AC220f20014D6a8Ecd972ECA)
+- **Deployed Contract (Studionet):** [`0x55baE9bf3D764626B125f862e9339cA368bCf382`](https://genlayer-explorer.vercel.app/address/0x55baE9bf3D764626B125f862e9339cA368bCf382)
+- **GenLayer Block Explorer:** [https://genlayer-explorer.vercel.app/address/0x55baE9bf3D764626B125f862e9339cA368bCf382](https://genlayer-explorer.vercel.app/address/0x55baE9bf3D764626B125f862e9339cA368bCf382)
 
 ---
 
@@ -32,7 +32,7 @@
 ```
 bugshield-ai-genlayer/
 ├── contracts/
-│   └── bug_shield.py              # GenLayer Python Intelligent Contract
+│   └── bug_shield.py              # GenLayer Python Intelligent Contract (260 lines)
 ├── scripts/
 │   ├── deploy.py                  # Deploy script to GenLayer Testnet
 │   └── interact.py                # Test script for bounty & PR submission
@@ -60,11 +60,12 @@ bugshield-ai-genlayer/
 ## ⚙️ Smart Contract: `contracts/bug_shield.py`
 
 The contract is written in Python for the GenLayer VM:
-- Deployed Contract Address: `0x39CA47Ec65a6d390AC220f20014D6a8Ecd972ECA`
-- Explorer: `https://genlayer-explorer.vercel.app/address/0x39CA47Ec65a6d390AC220f20014D6a8Ecd972ECA`
+- Deployed Contract Address: `0x55baE9bf3D764626B125f862e9339cA368bCf382`
+- Explorer: `https://genlayer-explorer.vercel.app/address/0x55baE9bf3D764626B125f862e9339cA368bCf382`
 - `create_bounty(...)`: Locks native token value in contract escrow.
 - `submit_and_evaluate_patch(...)`: Triggers `gl.exec_prompt(audit_prompt)` across GenLayer validators.
 - `cancel_bounty(...)`: Refunds escrow to creator after time-lock expiry.
+- `get_all_bounties(self)`: Returns JSON string array of all bounties.
 
 ---
 
