@@ -238,7 +238,7 @@ class Contract(gl.Contract):
         })
 
     @gl.public.view
-    def get_all_bounties() -> str:
+    def get_all_bounties(self) -> str:
         """Return a JSON array of all bounties for easy frontend fetching"""
         all_items = []
         for i in range(len(self.bounty_ids)):
