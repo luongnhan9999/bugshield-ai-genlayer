@@ -36,7 +36,7 @@ export const GENLAYER_TESTNET_CONFIG = {
 export const CONTRACT_ADDRESS =
   process.env.VITE_CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "0x55baE9bf3D764626B125f862e9339cA368bCf382";
 
-// Seed bounties aligned with contract string IDs & string statuses
+// Initial seed bounties aligned with contract string IDs & string statuses
 export const INITIAL_BOUNTIES: Bounty[] = [
   {
     id: "bounty-1",
@@ -142,13 +142,14 @@ export async function connectWallet(): Promise<string | null> {
 }
 
 /**
- * Poll RPC to wait for on-chain transaction finality
+ * Poll RPC to wait for on-chain transaction finality receipt.
+ * Fails explicitly if transaction receipt is missing or execution reverted.
  */
-export async function waitForTxFinality(txHash: string): Promise<void> {
+export async function waitForTxFinality(txHash: string): Promise<any> {
   const rpcUrl = process.env.NEXT_PUBLIC_GENLAYER_RPC || "https://testnet-rpc.genlayer.com";
   const startTime = Date.now();
-  // Poll for up to 30 seconds for finality
-  while (Date.now() - startTime < 30000) {
+  
+  while (Date.now() - startTime < 35000) {
     try {
       const res = await fetch(rpcUrl, {
         method: "POST",
@@ -162,60 +163,65 @@ export async function waitForTxFinality(txHash: string): Promise<void> {
       });
       const data = await res.json();
       if (data.result) {
-        return;
+        if (data.result.status === "0x0" || data.result.status === 0) {
+          throw new Error(`Transaction execution reverted on-chain (Tx: ${txHash})`);
+        }
+        return data.result;
       }
-    } catch (e) {
-      // Keep polling until receipt is confirmed
+    } catch (e: any) {
+      if (e.message && e.message.includes("reverted")) {
+        throw e;
+      }
     }
     await new Promise((r) => setTimeout(r, 2000));
   }
+  throw new Error(`Transaction finality receipt timed out on-chain (Tx: ${txHash})`);
 }
 
 /**
- * Read single bounty state directly from contract state on-chain
+ * Demonstrated public contract call: Reads contract state directly from blockchain.
+ * Fails explicitly if on-chain read fails.
  */
-export async function getBountyFromRPC(bountyId: string): Promise<Bounty | null> {
+export async function getBountyFromRPC(bountyId: string): Promise<Bounty> {
   const rpcUrl = process.env.NEXT_PUBLIC_GENLAYER_RPC || "https://testnet-rpc.genlayer.com";
-  try {
-    const res = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "gen_getContractState",
-        params: [CONTRACT_ADDRESS],
-        id: Date.now(),
-      }),
-    });
+  const res = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      method: "gen_getContractState",
+      params: [CONTRACT_ADDRESS],
+      id: Date.now(),
+    }),
+  });
 
-    const data = await res.json();
-    if (data.result && data.result.bounties && data.result.bounties[bountyId]) {
-      const raw = data.result.bounties[bountyId];
-      return {
-        id: String(raw.id || bountyId),
-        creator: String(raw.creator || ""),
-        title: String(raw.title || ""),
-        target_repo_url: String(raw.target_repo_url || ""),
-        vulnerability_description: String(raw.vulnerability_description || ""),
-        expected_fix_criteria: String(raw.expected_fix_criteria || ""),
-        reward_amount: String(raw.reward_amount || "0"),
-        status: String(raw.status || "OPEN") as "OPEN" | "RESOLVED" | "CANCELLED",
-        winner: String(raw.winner || ""),
-        ai_verdict_reason: String(raw.ai_verdict_reason || ""),
-        patch_pr_url: String(raw.patch_pr_url || ""),
-        created_at: String(raw.created_at || "0"),
-        submission_count: String(raw.submission_count || "0"),
-      };
-    }
-  } catch (err) {
-    console.warn("RPC getBountyFromRPC query warning:", err);
+  const data = await res.json();
+  if (data.result && data.result.bounties && data.result.bounties[bountyId]) {
+    const raw = data.result.bounties[bountyId];
+    return {
+      id: String(raw.id || bountyId),
+      creator: String(raw.creator || ""),
+      title: String(raw.title || ""),
+      target_repo_url: String(raw.target_repo_url || ""),
+      vulnerability_description: String(raw.vulnerability_description || ""),
+      expected_fix_criteria: String(raw.expected_fix_criteria || ""),
+      reward_amount: String(raw.reward_amount || "0"),
+      status: String(raw.status || "OPEN") as "OPEN" | "RESOLVED" | "CANCELLED",
+      winner: String(raw.winner || ""),
+      ai_verdict_reason: String(raw.ai_verdict_reason || ""),
+      patch_pr_url: String(raw.patch_pr_url || ""),
+      created_at: String(raw.created_at || "0"),
+      submission_count: String(raw.submission_count || "0"),
+    };
   }
-  return null;
+  
+  throw new Error(`Failed to read public contract state for bounty ID "${bountyId}" from GenLayer blockchain.`);
 }
 
 /**
  * Send real on-chain transaction to create bounty with native GEN token value.
  * Matches full contract signature: create_bounty(bounty_id: str, title: str, target_repo_url: str, vulnerability_description: str, expected_fix_criteria: str)
+ * Fails explicitly on missing receipt or failed contract state read. Never fabricates state on failure.
  */
 export async function createBountyOnChain(
   title: string,
@@ -254,39 +260,30 @@ export async function createBountyOnChain(
     ],
   })) as string;
 
-  // Wait for transaction finality
+  if (!txHash) {
+    throw new Error("On-chain transaction creation request was rejected or failed to broadcast.");
+  }
+
+  // 1. Wait for transaction finality on-chain (fails on missing/reverted receipt)
   await waitForTxFinality(txHash);
 
-  // Read actual state from contract
+  // 2. Read actual state from contract via public contract call (fails if read fails)
   const fetchedBounty = await getBountyFromRPC(bountyId);
 
-  const fallbackBounty: Bounty = {
-    id: bountyId,
-    creator: account,
-    title,
-    target_repo_url: targetRepoUrl,
-    vulnerability_description: vulnerabilityDescription,
-    expected_fix_criteria: expectedFixCriteria,
-    reward_amount: rewardAmountGen,
-    status: "OPEN",
-    winner: "",
-    ai_verdict_reason: "Awaiting Submissions",
-    patch_pr_url: "",
-  };
-
-  return { txHash, bounty: fetchedBounty || fallbackBounty };
+  return { txHash, bounty: fetchedBounty };
 }
 
 /**
  * Send real on-chain transaction to submit security patch.
  * NO local keyword checking. Waits for transaction finality and reads actual contract state on-chain!
+ * Fails explicitly on missing receipt or failed contract state read. Never fabricates state on failure.
  */
 export async function submitAndEvaluatePatchOnChain(
   bountyId: string,
   patchCode: string,
   prUrl: string,
   account: string
-): Promise<{ txHash: string; updatedBounty: Bounty | null }> {
+): Promise<{ txHash: string; updatedBounty: Bounty }> {
   if (typeof window === "undefined" || !window.ethereum) {
     throw new Error("No Web3 wallet provider available");
   }
@@ -309,10 +306,14 @@ export async function submitAndEvaluatePatchOnChain(
     ],
   })) as string;
 
-  // 1. Wait for transaction finality on-chain
+  if (!txHash) {
+    throw new Error("On-chain transaction patch submission request was rejected or failed to broadcast.");
+  }
+
+  // 1. Wait for transaction finality on-chain (fails on missing/reverted receipt)
   await waitForTxFinality(txHash);
 
-  // 2. Read actual contract verdict and resulting state from contract (NO local keyword checking!)
+  // 2. Read actual contract verdict and resulting state directly from public contract call
   const updatedBounty = await getBountyFromRPC(bountyId);
 
   return { txHash, updatedBounty };
@@ -320,12 +321,12 @@ export async function submitAndEvaluatePatchOnChain(
 
 /**
  * Send real on-chain transaction to cancel bounty & claim escrow refund.
- * Waits for transaction finality and reads updated state from contract.
+ * Waits for transaction finality and reads updated state from contract. Fails on error.
  */
 export async function cancelBountyOnChain(
   bountyId: string,
   account: string
-): Promise<{ txHash: string; updatedBounty: Bounty | null }> {
+): Promise<{ txHash: string; updatedBounty: Bounty }> {
   if (typeof window === "undefined" || !window.ethereum) {
     throw new Error("No Web3 wallet provider available");
   }
@@ -347,6 +348,10 @@ export async function cancelBountyOnChain(
       },
     ],
   })) as string;
+
+  if (!txHash) {
+    throw new Error("On-chain cancellation transaction request was rejected or failed to broadcast.");
+  }
 
   await waitForTxFinality(txHash);
   const updatedBounty = await getBountyFromRPC(bountyId);
@@ -391,7 +396,7 @@ export async function getBountiesFromRPC(): Promise<Bounty[]> {
       }));
     }
   } catch (err) {
-    console.warn("Using local state fallback.", err);
+    console.warn("Using initial bounties state fallback.", err);
   }
   return INITIAL_BOUNTIES;
 }

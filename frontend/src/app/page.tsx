@@ -72,17 +72,9 @@ export default function Home() {
     );
   };
 
-  const handleBountyCancelled = (bountyId: string, updatedBounty: Bounty | null) => {
+  const handleBountyCancelled = (bountyId: string, updatedBounty: Bounty) => {
     setBounties((prev) =>
-      prev.map((b) =>
-        b.id === bountyId
-          ? updatedBounty || {
-              ...b,
-              status: "CANCELLED",
-              ai_verdict_reason: "Bounty cancelled by creator. Escrow refunded.",
-            }
-          : b
-      )
+      prev.map((b) => (b.id === bountyId ? updatedBounty : b))
     );
   };
 

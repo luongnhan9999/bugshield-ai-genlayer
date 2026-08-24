@@ -22,7 +22,7 @@ import {
 interface BountyCardProps {
   bounty: Bounty;
   onOpenSubmitModal: (bounty: Bounty) => void;
-  onBountyCancelled?: (bountyId: string, updatedBounty: Bounty | null) => void;
+  onBountyCancelled?: (bountyId: string, updatedBounty: Bounty) => void;
   currentAccount?: string | null;
 }
 
@@ -42,26 +42,25 @@ export const BountyCard: React.FC<BountyCardProps> = ({
     currentAccount?.toLowerCase() === bounty.creator.toLowerCase();
 
   const handleCancelBounty = async () => {
+    if (!currentAccount || typeof window === "undefined" || !window.ethereum) {
+      alert("Web3 Wallet Connection Required: Please connect your Web3 wallet (MetaMask) to claim escrow refunds on-chain.");
+      return;
+    }
+
     if (!confirm("Are you sure you want to cancel this bounty and claim your escrow refund on-chain?")) {
       return;
     }
     setIsCancelling(true);
     try {
-      if (currentAccount && typeof window !== "undefined" && window.ethereum) {
-        const res = await cancelBountyOnChain(bounty.id, currentAccount);
-        alert(`On-Chain Cancellation Tx Confirmed! Tx Hash: ${res.txHash}`);
-        if (onBountyCancelled) {
-          onBountyCancelled(bounty.id, res.updatedBounty);
-        }
-      } else {
-        await new Promise((res) => setTimeout(res, 1000));
-        if (onBountyCancelled) {
-          onBountyCancelled(bounty.id, null);
-        }
+      const res = await cancelBountyOnChain(bounty.id, currentAccount);
+      alert(`✅ On-Chain Cancellation Tx Confirmed!\n\nTx Hash: ${res.txHash}\nEscrow refund disbursed on-chain.`);
+      if (onBountyCancelled) {
+        onBountyCancelled(bounty.id, res.updatedBounty);
       }
     } catch (err: any) {
-      console.error("Error cancelling bounty:", err);
-      alert(`Cancellation failed: ${err.message || err}`);
+      console.error("Error cancelling bounty on-chain:", err);
+      // Strictly fail on missing receipt or failed state read — NEVER show fabricated state
+      alert(`❌ Cancellation or Contract Read Failed:\n\n${err.message || err}\n\nCancellation aborted. No state changes were applied.`);
     } finally {
       setIsCancelling(false);
     }
@@ -198,7 +197,7 @@ export const BountyCard: React.FC<BountyCardProps> = ({
         )}
       </div>
 
-      {/* Action Footer: Allow both Submit Security Patch & Cancel Refund for maximum testability */}
+      {/* Action Footer */}
       <div className="pt-3 border-t border-border/40 flex items-center justify-between gap-2">
         <div className="text-[11px] text-slate-500 truncate max-w-[120px]">
           Creator: {bounty.creator.slice(0, 6)}...{bounty.creator.slice(-4)}

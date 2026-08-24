@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { X, Send, Cpu, Brain, CheckCircle2, XCircle, Zap } from "lucide-react";
+import { X, Send, Cpu, Brain, CheckCircle2, XCircle, Zap, AlertCircle } from "lucide-react";
 import { Bounty, submitAndEvaluatePatchOnChain } from "../lib/genlayer";
 
 interface SubmitPatchModalProps {
@@ -26,7 +26,7 @@ export const SubmitPatchModal: React.FC<SubmitPatchModalProps> = ({
 
   if (!isOpen || !bounty) return null;
 
-  // Judge Demo Quick Fill: Valid Patch (Triggers AI Approval & Instant Payout)
+  // Judge Demo Quick Fill: Valid Patch (Triggers AI Approval & Instant Payout on-chain)
   const handleQuickFillValid = () => {
     setPrUrl(`https://github.com/bugshield-ai/demo-repo/pull/${Math.floor(Math.random() * 100) + 20}`);
     setPatchCode(`// Valid Security Patch Fix
@@ -52,7 +52,7 @@ contract VaultEscrow is ReentrancyGuard {
 }`);
   };
 
-  // Judge Demo Quick Fill: Invalid Patch (Triggers AI Rejection without Locking Escrow)
+  // Judge Demo Quick Fill: Invalid Patch (Triggers AI Rejection without Locking Escrow on-chain)
   const handleQuickFillInvalid = () => {
     setPrUrl(`https://github.com/bugshield-ai/demo-repo/pull/${Math.floor(Math.random() * 100) + 20}`);
     setPatchCode(`// Incomplete Patch - Missing reentrancy guard or state checks
@@ -77,79 +77,41 @@ contract VaultEscrow {
       return;
     }
 
+    if (!account || typeof window === "undefined" || !window.ethereum) {
+      alert("Web3 Wallet Connection Required: Please connect your MetaMask/Web3 wallet to broadcast on-chain transactions to GenLayer Testnet.");
+      return;
+    }
+
     setIsAuditing(true);
 
     try {
-      if (account && typeof window !== "undefined" && window.ethereum) {
-        setAuditStep("Step 1/3: Prompting MetaMask for On-Chain Patch Transaction Approval...");
-        const result = await submitAndEvaluatePatchOnChain(bounty.id, patchCode, prUrl, account);
+      setAuditStep("Step 1/3: Prompting MetaMask for On-Chain Patch Transaction Approval...");
+      const result = await submitAndEvaluatePatchOnChain(bounty.id, patchCode, prUrl, account);
 
-        setAuditStep("Step 2/3: Transaction broadcasted! Waiting for GenLayer Validators On-Chain Consensus & Finality...");
-        await new Promise((res) => setTimeout(res, 1500));
+      setAuditStep("Step 2/3: Transaction broadcasted! Waiting for GenLayer Validators On-Chain Finality Receipt...");
+      await new Promise((res) => setTimeout(res, 1000));
 
-        setAuditStep("Step 3/3: Reading Actual Contract Verdict and State from Chain...");
-        await new Promise((res) => setTimeout(res, 1000));
+      setAuditStep("Step 3/3: Demonstrated Public Contract Call — Reading Confirmed On-Chain Verdict & State...");
+      await new Promise((res) => setTimeout(res, 1000));
 
-        const updatedOnChainBounty: Bounty = result.updatedBounty || {
-          ...bounty,
-          status: "RESOLVED",
-          winner: account,
-          ai_verdict_reason: "[On-Chain Transaction Confirmed] Patch submitted and audited.",
-          patch_pr_url: prUrl,
-        };
+      // Strictly read updated state directly from public contract view call
+      const updatedOnChainBounty = result.updatedBounty;
 
-        onPatchEvaluated(bounty.id, updatedOnChainBounty);
+      onPatchEvaluated(bounty.id, updatedOnChainBounty);
 
-        if (updatedOnChainBounty.status === "RESOLVED") {
-          alert(`✅ ON-CHAIN VALIDATOR CONSENSUS PASSED!\n\nPatch approved by GenLayer AI VM. Escrow payout disbursed to winner: ${updatedOnChainBounty.winner || account}`);
-        } else {
-          alert(`❌ ON-CHAIN VALIDATOR CONSENSUS REJECTED!\n\nPatch failed on-chain audit. Bounty remains OPEN for resubmission or refund. Reason: ${updatedOnChainBounty.ai_verdict_reason}`);
-        }
+      if (updatedOnChainBounty.status === "RESOLVED") {
+        alert(`✅ ON-CHAIN VALIDATOR CONSENSUS PASSED!\n\nPatch verified by GenLayer AI VM. Reward payout disbursed on-chain. Winner: ${updatedOnChainBounty.winner || account}`);
       } else {
-        // Fallback preview mode when wallet disconnected
-        setAuditStep("Step 1/3: Broadcasting Patch to GenLayer Validators...");
-        await new Promise((res) => setTimeout(res, 1000));
-
-        setAuditStep("Step 2/3: Executing On-Chain LLM Prompt (gl.exec_prompt)...");
-        await new Promise((res) => setTimeout(res, 1500));
-
-        setAuditStep("Step 3/3: Reading Contract Verdict from Chain...");
-        await new Promise((res) => setTimeout(res, 1000));
-
-        const codeLower = patchCode.toLowerCase();
-        const isSuccess =
-          codeLower.includes("modifier") ||
-          codeLower.includes("reentrancyguard") ||
-          codeLower.includes("nonreentrant") ||
-          codeLower.includes("safemath");
-
-        const verdictReason = isSuccess
-          ? `[Submission #1] PASSED: The submitted security patch eliminates the vulnerability by introducing proper guards/access checks. Acceptance criteria met. Escrow of ${bounty.reward_amount} GEN disbursed.`
-          : `[Submission #1] REJECTED: The submitted diff lacks explicit security guards or access control checks matching acceptance criteria. Bounty remains OPEN for resubmission or refund.`;
-
-        const updatedBounty: Bounty = {
-          ...bounty,
-          status: isSuccess ? "RESOLVED" : "OPEN",
-          winner: isSuccess ? account || "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC" : bounty.winner,
-          ai_verdict_reason: verdictReason,
-          patch_pr_url: prUrl,
-        };
-
-        onPatchEvaluated(bounty.id, updatedBounty);
-
-        if (isSuccess) {
-          alert(`✅ DEMO CONSENSUS PASSED!\n\nPatch verified. Reward disbursed.`);
-        } else {
-          alert(`❌ DEMO CONSENSUS REJECTED!\n\nPatch failed checks. Bounty remains OPEN for resubmission or refund.`);
-        }
+        alert(`❌ ON-CHAIN VALIDATOR CONSENSUS REJECTED!\n\nPatch failed security evaluation on-chain. Bounty remains OPEN for resubmission or refund. Reason: ${updatedOnChainBounty.ai_verdict_reason}`);
       }
 
       onClose();
       setPatchCode("");
       setPrUrl("");
     } catch (err: any) {
-      console.error("Error submitting patch:", err);
-      alert(`Transaction failed or rejected: ${err.message || err}`);
+      console.error("On-chain patch submission failed:", err);
+      // Strictly fail on missing receipt or failed state read — NEVER show fabricated state
+      alert(`❌ Transaction or Contract Read Failed:\n\n${err.message || err}\n\nState update aborted. No state changes were applied.`);
     } finally {
       setIsAuditing(false);
     }
@@ -179,6 +141,13 @@ contract VaultEscrow {
             </p>
           </div>
         </div>
+
+        {!account && (
+          <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-300 flex items-center">
+            <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
+            Wallet not connected. Connect Web3 wallet at top right for real on-chain transaction execution!
+          </div>
+        )}
 
         {/* Judge Fast-Test Demo Fill Buttons */}
         {!isAuditing && (

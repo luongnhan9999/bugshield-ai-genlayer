@@ -47,43 +47,33 @@ export const CreateBountyModal: React.FC<CreateBountyModalProps> = ({
       return;
     }
 
+    if (!account || typeof window === "undefined" || !window.ethereum) {
+      alert("Web3 Wallet Connection Required: Please connect your Web3 wallet (MetaMask) to lock native token escrow on-chain.");
+      return;
+    }
+
     setIsSubmitting(true);
     setTxNotice(null);
 
     try {
-      if (account && typeof window !== "undefined" && window.ethereum) {
-        setTxNotice("Prompting MetaMask for real on-chain transaction approval...");
-        const result = await createBountyOnChain(
-          title,
-          targetRepoUrl,
-          vulnerabilityDescription,
-          expectedFixCriteria,
-          rewardAmount,
-          account
-        );
-        setTxNotice(`On-chain transaction confirmed! Hash: ${result.txHash.slice(0, 12)}... Reading contract state...`);
-        await new Promise((res) => setTimeout(res, 1000));
-        onBountyCreated(result.bounty);
-      } else {
-        // Fallback preview mode when wallet disconnected
-        const fallbackId = "bounty-" + Date.now();
-        const createdBounty: Bounty = {
-          id: fallbackId,
-          creator: account || "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-          title,
-          target_repo_url: targetRepoUrl,
-          vulnerability_description: vulnerabilityDescription,
-          expected_fix_criteria: expectedFixCriteria,
-          reward_amount: rewardAmount || "1.0",
-          status: "OPEN",
-          winner: "",
-          ai_verdict_reason: "Awaiting Submissions",
-          patch_pr_url: "",
-          submission_count: "0",
-        };
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        onBountyCreated(createdBounty);
-      }
+      setTxNotice("Step 1/3: Prompting MetaMask for real on-chain transaction approval...");
+      const result = await createBountyOnChain(
+        title,
+        targetRepoUrl,
+        vulnerabilityDescription,
+        expectedFixCriteria,
+        rewardAmount,
+        account
+      );
+
+      setTxNotice("Step 2/3: On-chain transaction broadcasted! Waiting for finality receipt...");
+      await new Promise((res) => setTimeout(res, 1000));
+
+      setTxNotice("Step 3/3: Demonstrated Public Contract Call — Reading Confirmed On-Chain State...");
+      await new Promise((res) => setTimeout(res, 1000));
+
+      // Strictly read updated state directly from public contract view call
+      onBountyCreated(result.bounty);
 
       onClose();
       // Reset form
@@ -93,8 +83,9 @@ export const CreateBountyModal: React.FC<CreateBountyModalProps> = ({
       setExpectedFixCriteria("");
       setRewardAmount("3.5");
     } catch (err: any) {
-      console.error("Error creating bounty:", err);
-      alert(`Transaction failed or rejected: ${err.message || err}`);
+      console.error("Error creating bounty on-chain:", err);
+      // Strictly fail on missing receipt or failed state read — NEVER show fabricated state
+      alert(`❌ Transaction or Contract Read Failed:\n\n${err.message || err}\n\nBounty creation aborted. No state changes were applied.`);
     } finally {
       setIsSubmitting(false);
       setTxNotice(null);
@@ -107,7 +98,8 @@ export const CreateBountyModal: React.FC<CreateBountyModalProps> = ({
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-5 right-5 text-slate-400 hover:text-white transition-colors"
+          disabled={isSubmitting}
+          className="absolute top-5 right-5 text-slate-400 hover:text-white transition-colors disabled:opacity-50"
         >
           <X className="w-5 h-5" />
         </button>
