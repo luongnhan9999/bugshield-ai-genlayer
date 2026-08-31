@@ -160,7 +160,7 @@ export async function waitForTxFinality(txHash: string): Promise<any> {
   const rpcUrl = process.env.NEXT_PUBLIC_GENLAYER_RPC || "https://testnet-rpc.genlayer.com";
   const startTime = Date.now();
   
-  while (Date.now() - startTime < 35000) {
+  while (Date.now() - startTime < 120000) {
     try {
       const res = await fetch(rpcUrl, {
         method: "POST",
