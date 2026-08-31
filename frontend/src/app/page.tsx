@@ -6,14 +6,15 @@ import { Footer } from "../components/Footer";
 import { BountyCard } from "../components/BountyCard";
 import { CreateBountyModal } from "../components/CreateBountyModal";
 import { SubmitPatchModal } from "../components/SubmitPatchModal";
-import { Bounty, INITIAL_BOUNTIES, getBountiesFromRPC } from "../lib/genlayer";
+import { Bounty, getBountiesFromRPC } from "../lib/genlayer";
 import { Search, Shield, Cpu, ExternalLink, Sparkles, Crown, Zap } from "lucide-react";
 
 export default function Home() {
   const [account, setAccount] = useState<string | null>(null);
-  const [bounties, setBounties] = useState<Bounty[]>(INITIAL_BOUNTIES);
+  const [bounties, setBounties] = useState<Bounty[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [rpcError, setRpcError] = useState<string | null>(null);
 
   // Modals state
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
@@ -25,11 +26,17 @@ export default function Home() {
   useEffect(() => {
     async function loadRPC() {
       setIsLoadingRpc(true);
-      const data = await getBountiesFromRPC();
-      if (data && data.length > 0) {
+      setRpcError(null);
+      try {
+        const data = await getBountiesFromRPC();
         setBounties(data);
+      } catch (err: any) {
+        console.error("Failed to load bounties:", err);
+        setBounties([]); // Never show seeded or mock data when read fails
+        setRpcError("Failed to retrieve public contract bounties from GenLayer network. Please verify RPC node connection.");
+      } finally {
+        setIsLoadingRpc(false);
       }
-      setIsLoadingRpc(false);
     }
     loadRPC();
   }, []);
@@ -194,6 +201,17 @@ export default function Home() {
             ))}
           </div>
         </div>
+
+        {/* Error Alert Box */}
+        {rpcError && (
+          <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-xs sm:text-sm text-rose-300 flex items-start">
+            <Shield className="w-5 h-5 mr-3 text-rose-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-white mb-0.5">Blockchain RPC Connection Failure</p>
+              <p className="text-rose-300/90">{rpcError}</p>
+            </div>
+          </div>
+        )}
 
         {/* Bounties Grid */}
         {filteredBounties.length > 0 ? (
