@@ -7,8 +7,8 @@
 ## 🌐 Live App & Smart Contract
 
 - **Live App:** [https://bugshield-ai-genlayer.vercel.app](https://bugshield-ai-genlayer.vercel.app)
-- **Deployed Contract (Studionet):** [`0x55baE9bf3D764626B125f862e9339cA368bCf382`](https://genlayer-explorer.vercel.app/address/0x55baE9bf3D764626B125f862e9339cA368bCf382)
-- **GenLayer Block Explorer:** [https://genlayer-explorer.vercel.app/address/0x55baE9bf3D764626B125f862e9339cA368bCf382](https://genlayer-explorer.vercel.app/address/0x55baE9bf3D764626B125f862e9339cA368bCf382)
+- **Deployed Contract (Studionet):** [`0x6741441ecd264949E38eDc9620B101fe427f3f69`](https://genlayer-explorer.vercel.app/address/0x6741441ecd264949E38eDc9620B101fe427f3f69)
+- **GenLayer Block Explorer:** [https://genlayer-explorer.vercel.app/address/0x6741441ecd264949E38eDc9620B101fe427f3f69](https://genlayer-explorer.vercel.app/address/0x6741441ecd264949E38eDc9620B101fe427f3f69)
 
 ---
 
@@ -60,8 +60,8 @@ bugshield-ai-genlayer/
 ## ⚙️ Smart Contract: `contracts/bug_shield.py`
 
 The contract is written in Python for the GenLayer VM:
-- Deployed Contract Address: `0x55baE9bf3D764626B125f862e9339cA368bCf382`
-- Explorer: `https://genlayer-explorer.vercel.app/address/0x55baE9bf3D764626B125f862e9339cA368bCf382`
+- Deployed Contract Address: `0x6741441ecd264949E38eDc9620B101fe427f3f69`
+- Explorer: `https://genlayer-explorer.vercel.app/address/0x6741441ecd264949E38eDc9620B101fe427f3f69`
 - `create_bounty(...)`: Locks native token value in contract escrow.
 - `submit_and_evaluate_patch(...)`: Triggers `gl.exec_prompt(audit_prompt)` across GenLayer validators.
 - `cancel_bounty(...)`: Refunds escrow to creator after time-lock expiry.

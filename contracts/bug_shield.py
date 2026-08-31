@@ -3,6 +3,7 @@
 from genlayer import *
 from dataclasses import dataclass
 import json
+import datetime
 
 @allow_storage
 @dataclass
@@ -31,6 +32,12 @@ class Contract(gl.Contract):
         # GenVM automatically allocates memory for TreeMap & DynArray
         self.owner = str(gl.message.sender_address).lower()
 
+    def _now(self) -> bigint:
+        s = gl.message_raw["datetime"]
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return bigint(int(datetime.datetime.fromisoformat(s).timestamp()))
+
     def _parse_llm_json(self, response) -> dict:
         """Robust JSON parser to handle LLM markdown formatting issues"""
         if isinstance(response, dict):
@@ -43,7 +50,30 @@ class Contract(gl.Contract):
                 text = text[3:]
             if text.endswith("```"):
                 text = text[:-3]
-            return json.loads(text.strip())
+            text = text.strip()
+            
+            try:
+                return json.loads(text)
+            except Exception:
+                pass
+
+            try:
+                cleaned = text.replace("'", '"').replace("True", "true").replace("False", "false")
+                return json.loads(cleaned)
+            except Exception:
+                pass
+
+            import re
+            is_valid = True
+            if "false" in text.lower():
+                is_valid = False
+            
+            reason_match = re.search(r'"reason"\s*:\s*"([^"]+)"', text)
+            if not reason_match:
+                reason_match = re.search(r"'reason'\s*:\s*'([^']+)'", text)
+            
+            reason = reason_match.group(1) if reason_match else text[:200]
+            return {"is_valid": is_valid, "reason": reason}
         except Exception as e:
             return {"is_valid": False, "reason": "Failed to parse JSON: " + str(e)}
 
@@ -68,7 +98,7 @@ class Contract(gl.Contract):
         if bounty_id in self.bounties:
             raise UserError("Bounty ID already exists")
 
-        current_time = bigint(int(gl.block.timestamp))
+        current_time = self._now()
 
         self.bounty_ids.append(bounty_id)
         self.bounties[bounty_id] = Bounty(
@@ -202,7 +232,7 @@ class Contract(gl.Contract):
         if bounty.status != "OPEN":
             raise UserError("Bounty is not OPEN for cancellation")
 
-        current_time = bigint(int(gl.block.timestamp))
+        current_time = self._now()
         if current_time < bounty.created_at + bigint(300):
             if bounty.submission_count > bigint(0):
                 raise UserError("Bounty escrow is time-locked (5 minutes) to protect security hunters under active evaluation.")
