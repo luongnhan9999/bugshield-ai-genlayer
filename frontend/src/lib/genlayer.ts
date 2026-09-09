@@ -269,8 +269,8 @@ export async function ethCallViewOnChain(functionName: string, args: any[] = [])
 
   const endpoints = [
     process.env.NEXT_PUBLIC_GENLAYER_RPC,
-    "https://rpc-asimov.genlayer.com",
     "https://studio.genlayer.com/api",
+    "https://rpc-asimov.genlayer.com",
   ].filter(Boolean) as string[];
 
   let lastError: any = null;
