@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { X, Send, Cpu, Brain, CheckCircle2, XCircle, Zap, AlertCircle } from "lucide-react";
+import { X, Send, Cpu, Brain, CheckCircle2, XCircle, Zap, AlertCircle, ShieldCheck } from "lucide-react";
 import { Bounty, submitAndEvaluatePatchOnChain } from "../lib/genlayer";
 
 interface SubmitPatchModalProps {
@@ -19,7 +19,6 @@ export const SubmitPatchModal: React.FC<SubmitPatchModalProps> = ({
   onPatchEvaluated,
   account,
 }) => {
-  const [patchCode, setPatchCode] = useState("");
   const [commitHash, setCommitHash] = useState("");
   const [prUrl, setPrUrl] = useState("");
   const [isAuditing, setIsAuditing] = useState(false);
@@ -31,46 +30,12 @@ export const SubmitPatchModal: React.FC<SubmitPatchModalProps> = ({
   const handleQuickFillValid = () => {
     setPrUrl(`https://github.com/bugshield-ai/demo-repo/pull/${Math.floor(Math.random() * 100) + 20}`);
     setCommitHash("e4d9c72a8b3f1e567890abcd1234ef5678901234");
-    setPatchCode(`// Valid Security Patch Fix
-// File: contracts/VaultEscrow.sol
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-
-contract VaultEscrow is ReentrancyGuard {
-    mapping(address => uint256) public balances;
-
--   function withdraw() external {
--       uint256 amount = balances[msg.sender];
--       (bool success, ) = msg.sender.call{value: amount}("");
--       require(success, "Transfer failed");
--       balances[msg.sender] = 0;
--   }
-
-+   function withdraw() external nonReentrant {
-+       uint256 amount = balances[msg.sender];
-+       balances[msg.sender] = 0; // State check before external call
-+       (bool success, ) = msg.sender.call{value: amount}("");
-+       require(success, "Transfer failed");
-+   }
-}`);
   };
 
   // Judge Demo Quick Fill: Invalid Patch (Triggers AI Rejection without Locking Escrow on-chain)
   const handleQuickFillInvalid = () => {
     setPrUrl(`https://github.com/bugshield-ai/demo-repo/pull/${Math.floor(Math.random() * 100) + 20}`);
     setCommitHash("b1a2c3d4e5f67890123456789abcdef012345678");
-    setPatchCode(`// Incomplete Patch - Missing reentrancy guard or state checks
-// File: contracts/VaultEscrow.sol
-
-contract VaultEscrow {
-    mapping(address => uint256) public balances;
-
-    function withdraw() external {
-        uint256 amount = balances[msg.sender];
-        // Note: No nonReentrant modifier and balance updated after call
-        (bool success, ) = msg.sender.call{value: amount}("");
-        require(success, "Transfer failed");
-    }
-}`);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -94,7 +59,7 @@ contract VaultEscrow {
 
     try {
       setAuditStep("Step 1/3: Prompting MetaMask for On-Chain Patch Transaction Approval...");
-      const result = await submitAndEvaluatePatchOnChain(bounty.id, commitHash.trim(), prUrl.trim(), patchCode.trim(), account);
+      const result = await submitAndEvaluatePatchOnChain(bounty.id, commitHash.trim(), prUrl.trim(), account);
 
       setAuditStep("Step 2/3: Transaction broadcasted! GenLayer Validators fetching authentic commit diff & evaluating consensus...");
       await new Promise((res) => setTimeout(res, 1000));
@@ -115,7 +80,6 @@ contract VaultEscrow {
 
       onClose();
       setCommitHash("");
-      setPatchCode("");
       setPrUrl("");
     } catch (err: any) {
       console.error("On-chain patch submission failed:", err);
@@ -241,18 +205,14 @@ contract VaultEscrow {
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Code Patch Diff or Snippet *
-              </label>
-              <textarea
-                required
-                rows={6}
-                placeholder={`// Paste your Git diff or modified smart contract code snippet here\n\n- function withdraw() public {\n+ function withdraw() public nonReentrant {\n    // ...\n  }`}
-                value={patchCode}
-                onChange={(e) => setPatchCode(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-900 border border-border rounded-xl text-sm text-white focus:outline-none focus:border-cyan-500 font-mono text-xs"
-              />
+            <div className="p-3.5 bg-indigo-950/40 border border-indigo-500/30 rounded-xl text-xs text-indigo-200 space-y-1">
+              <div className="font-semibold text-cyan-300 flex items-center">
+                <ShieldCheck className="w-4 h-4 mr-1.5 text-cyan-400" />
+                100% Repository-Grounded Git Diff Audit:
+              </div>
+              <p className="text-slate-300 text-[11px] leading-relaxed">
+                No manual code diff pasting required. GenLayer validators independently fetch the authentic git commit diff directly from GitHub (<code className="text-cyan-300">/commit/{'{commit_hash}'}.diff</code>) and bind this immutable commit SHA on-chain before consensus evaluation.
+              </p>
             </div>
 
             <div className="pt-2 flex justify-end space-x-3">

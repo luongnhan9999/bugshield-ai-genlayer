@@ -125,13 +125,12 @@ class Contract(gl.Contract):
         bounty_id: str,
         commit_hash: str,
         pr_url: str,
-        patch_code: str = "",
     ) -> None:
         """
         GROUNDED VALIDATOR CONSENSUS & FAIL-CLOSED ESCROW:
-        - Fetches authentic git commit diff from GitHub via gl.nondet.web.get.
+        - Fetches authentic git commit diff directly from GitHub via gl.nondet.web.get.
         - Binds an immutable git commit hash to the on-chain bounty state.
-        - Fails closed on any fetch errors, 404s, or malformed LLM outputs before consensus can release escrow.
+        - Strictly fails closed without releasing escrow if the authentic diff cannot be fetched or if outputs are malformed.
         """
         if bounty_id not in self.bounties:
             raise UserError("Bounty not found")
@@ -159,7 +158,7 @@ class Contract(gl.Contract):
         pr_diff_url = f"{clean_pr.rstrip('/')}.diff" if "/pull/" in clean_pr else commit_diff_url
 
         def leader_fn():
-            # 1. FAIL-CLOSED WEB FETCH: Ground evaluation in real repo/commit diff
+            # 1. STRICT FAIL-CLOSED WEB FETCH: Ground evaluation strictly in real repo/commit diff
             diff_text = ""
             fetch_error = ""
 
@@ -175,21 +174,11 @@ class Contract(gl.Contract):
                 except Exception as e:
                     fetch_error = str(e)
 
-            # If web fetch was unable to retrieve the live diff (e.g. offline sandbox), fallback to provided patch_code
+            # STRICT FAIL-CLOSED: Absolutely NO pasted code fallback allowed
             if not diff_text or len(diff_text.strip()) < 15:
-                if patch_code and len(patch_code.strip()) >= 15:
-                    diff_text = patch_code.strip()
-                else:
-                    # FAIL-CLOSED: No authentic git diff available
-                    return {
-                        "is_valid": False,
-                        "reason": f"FAIL-CLOSED: Could not fetch git diff from repository for commit {clean_commit}. Web error: {fetch_error or 'HTTP 404 / Invalid Diff'}"
-                    }
-
-            if len(diff_text.strip()) < 15:
                 return {
                     "is_valid": False,
-                    "reason": "FAIL-CLOSED: Git diff is empty or insufficient (<15 characters)."
+                    "reason": f"FAIL-CLOSED: Could not fetch authentic git diff for commit {clean_commit}. Web fetch error: {fetch_error or 'HTTP 404 / Invalid Diff'}"
                 }
 
             # 2. CONSTRUCT GROUNDED LLM AUDIT PROMPT

@@ -280,7 +280,6 @@ export async function submitAndEvaluatePatchOnChain(
   bountyId: string,
   commitHash: string,
   prUrl: string,
-  patchCode: string,
   account: string
 ): Promise<{ txHash: string; updatedBounty: Bounty }> {
   if (typeof window === "undefined" || !window.ethereum) {
@@ -289,7 +288,7 @@ export async function submitAndEvaluatePatchOnChain(
 
   const payload = {
     method: "submit_and_evaluate_patch",
-    args: [bountyId, commitHash, prUrl, patchCode],
+    args: [bountyId, commitHash, prUrl],
   };
   const dataHex = "0x" + Buffer.from(JSON.stringify(payload)).toString("hex");
 
