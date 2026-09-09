@@ -38,10 +38,21 @@ class Contract(gl.Contract):
         self.owner = str(gl.message.sender_address).lower()
 
     def _now(self) -> bigint:
-        s = gl.message_raw["datetime"]
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
-        return bigint(int(datetime.datetime.fromisoformat(s).timestamp()))
+        if not hasattr(gl, "message_raw") or not isinstance(gl.message_raw, dict):
+            raise UserError("Trusted runtime execution timestamp context missing")
+        dt_raw = gl.message_raw.get("datetime", None)
+        if not dt_raw:
+            raise UserError("Trusted timestamp 'datetime' missing from transaction context")
+        try:
+            s = str(dt_raw)
+            if s.endswith("Z"):
+                s = s[:-1] + "+00:00"
+            ts = int(datetime.datetime.fromisoformat(s).timestamp())
+            if ts <= 0:
+                raise UserError("Invalid non-positive timestamp resolved")
+            return bigint(ts)
+        except Exception as e:
+            raise UserError(f"Failed to parse runtime timestamp: {str(e)}")
 
     def _parse_llm_json(self, response) -> dict:
         """Robust JSON parser to handle LLM markdown formatting issues"""
@@ -229,8 +240,8 @@ class Contract(gl.Contract):
             - Vulnerability Description: {vuln_desc}
             - Expected Fix Criteria: {criteria}
 
-            [AUTHENTIC GIT COMMIT DIFF (UNTRUSTED PASSIVE DATA)]
-            {diff_text[:6000]}
+            [AUTHENTIC GIT COMMIT DIFF (UNTRUSTED PASSIVE DATA - FULL UNTRUNCATED)]
+            {diff_text}
 
             [TWO-WAY VERIFICATION RULES]
             1. (Hunter Protection): Does the patch completely and cleanly resolve the described vulnerability as specified in the criteria?
@@ -378,8 +389,8 @@ class Contract(gl.Contract):
             - Vulnerability: {vuln_desc}
             - Acceptance Criteria: {criteria}
 
-            [AUTHENTIC GIT COMMIT DIFF]
-            {diff_text[:6000]}
+            [AUTHENTIC GIT COMMIT DIFF (FULL UNTRUNCATED)]
+            {diff_text}
 
             [TRIBUNAL RE-EVALUATION RULES]
             1. Impartially analyze if the Hunter's technical justification validly clarifies the patch and satisfies the original criteria.
