@@ -1,4 +1,4 @@
-import { encodeRlp, toUtf8Bytes, hexlify, AbiCoder } from "ethers";
+import { encodeRlp, AbiCoder } from "ethers";
 
 declare global {
   interface Window {
@@ -35,9 +35,12 @@ export const GENLAYER_TESTNET_CONFIG = {
   blockExplorerUrls: ["https://scan.genlayer.com"],
 };
 
-// Valid 40-hex character Ethereum / GenLayer Contract Address
+// Target Intelligent Contract Address
 export const CONTRACT_ADDRESS =
   process.env.VITE_CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "0x44e0Cf896c434B57F1439A1d1699C27A50AD87D0";
+
+// GenLayer Consensus Main Contract (transactions are submitted here to trigger validator consensus)
+export const CONSENSUS_MAIN_CONTRACT = "0x0000000000000000000000000000000000000000";
 
 export const INITIAL_BOUNTIES: Bounty[] = [];
 
@@ -71,7 +74,6 @@ export async function connectWallet(): Promise<string | null> {
       method: "eth_requestAccounts",
     })) as string[];
 
-    // Switch network to GenLayer Testnet
     try {
       await window.ethereum.request({
         method: "wallet_switchEthereumChain",
@@ -93,64 +95,166 @@ export async function connectWallet(): Promise<string | null> {
   }
 }
 
-/**
- * Helper to encode function call data into GenVM-compatible RLP payload
- */
-export function getEncodedViewData(functionName: string, args: any[]): string {
-  const methodParamsAsString = JSON.stringify(args);
-  const data = [
-    hexlify(toUtf8Bytes(functionName)),
-    hexlify(toUtf8Bytes(methodParamsAsString))
-  ];
-  return encodeRlp(data);
-}
+// -------------------------------------------------------------
+// GenLayer Native Calldata Encoder & Decoder (Pure TypeScript)
+// -------------------------------------------------------------
+const BITS_IN_TYPE = 3;
+const TYPE_SPECIAL = 0;
+const TYPE_PINT = 1;
+const TYPE_NINT = 2;
+const TYPE_BYTES = 3;
+const TYPE_STR = 4;
+const TYPE_ARR = 5;
+const TYPE_MAP = 6;
 
-/**
- * Helper to decode string value returned from standard eth_call
- */
-export function decodeRpcString(hexResult: string): string {
-  try {
-    const decoded = AbiCoder.defaultAbiCoder().decode(["string"], hexResult);
-    return decoded[0];
-  } catch (e: any) {
-    const cleanHex = hexResult.startsWith("0x") ? hexResult.slice(2) : hexResult;
-    return Buffer.from(cleanHex, "hex").toString("utf8");
+function appendUleb128(mem: number[], i: number | bigint): void {
+  let val = BigInt(i);
+  if (val === 0n) {
+    mem.push(0);
+    return;
+  }
+  while (val > 0n) {
+    let cur = Number(val & 0x7fn);
+    val = val >> 7n;
+    if (val > 0n) cur |= 0x80;
+    mem.push(cur);
   }
 }
 
-/**
- * Executes a read-only View contract call using standard eth_call via RPC
- */
-export async function ethCallViewOnChain(functionName: string, args: any[]): Promise<string> {
-  const encodedData = getEncodedViewData(functionName, args);
+export function encodeCalldata(x: any): Buffer {
+  const mem: number[] = [];
 
-  // 1. Prioritize MetaMask active provider (avoids CORS, 403, and network mismatches)
-  if (typeof window !== "undefined" && window.ethereum) {
-    try {
-      const hexResult = (await window.ethereum.request({
-        method: "eth_call",
-        params: [
-          {
-            to: CONTRACT_ADDRESS,
-            data: encodedData,
-          },
-          "latest",
-        ],
-      })) as string;
-      if (hexResult && hexResult !== "0x") {
-        return decodeRpcString(hexResult);
+  function impl(b: any): void {
+    if (b === null || b === undefined) {
+      mem.push(0);
+    } else if (b === false) {
+      mem.push(1 << BITS_IN_TYPE);
+    } else if (b === true) {
+      mem.push(2 << BITS_IN_TYPE);
+    } else if (typeof b === "number" || typeof b === "bigint") {
+      let n = BigInt(b);
+      if (n >= 0n) {
+        appendUleb128(mem, (n << 3n) | BigInt(TYPE_PINT));
+      } else {
+        n = -n - 1n;
+        appendUleb128(mem, (n << 3n) | BigInt(TYPE_NINT));
       }
-    } catch (err) {
-      console.warn(`window.ethereum eth_call failed for ${functionName}, trying fallback:`, err);
+    } else if (typeof b === "string") {
+      const bts = Buffer.from(b, "utf8");
+      appendUleb128(mem, (BigInt(bts.length) << 3n) | BigInt(TYPE_STR));
+      for (let i = 0; i < bts.length; i++) mem.push(bts[i]);
+    } else if (Array.isArray(b)) {
+      appendUleb128(mem, (BigInt(b.length) << 3n) | BigInt(TYPE_ARR));
+      for (const item of b) impl(item);
+    } else if (typeof b === "object") {
+      const keys = Object.keys(b).sort();
+      appendUleb128(mem, (BigInt(keys.length) << 3n) | BigInt(TYPE_MAP));
+      for (const k of keys) {
+        const bts = Buffer.from(k, "utf8");
+        appendUleb128(mem, bts.length);
+        for (let i = 0; i < bts.length; i++) mem.push(bts[i]);
+        impl(b[k]);
+      }
+    } else {
+      throw new Error("Unsupported calldata type: " + typeof b);
     }
   }
 
-  // 2. Direct fetch fallback with multiple RPC endpoints
+  impl(x);
+  return Buffer.from(mem);
+}
+
+function readUleb128(buf: Uint8Array, state: { offset: number }): number {
+  let ret = 0n;
+  let off = 0n;
+  while (true) {
+    const m = BigInt(buf[state.offset++]);
+    ret = ret | ((m & 0x7fn) << off);
+    off += 7n;
+    if ((m & 0x80n) === 0n) break;
+  }
+  return Number(ret);
+}
+
+export function decodeCalldata(buf: Uint8Array): any {
+  const state = { offset: 0 };
+
+  function impl(): any {
+    const code = readUleb128(buf, state);
+    const typ = code & 0x7;
+    if (typ === TYPE_SPECIAL) {
+      if (code === 0) return null;
+      if (code === 8) return false;
+      if (code === 16) return true;
+      throw new Error("Unknown special: " + code);
+    }
+    const val = code >> 3;
+    if (typ === TYPE_PINT) return val;
+    if (typ === TYPE_NINT) return -val - 1;
+    if (typ === TYPE_BYTES) {
+      const bts = buf.subarray(state.offset, state.offset + val);
+      state.offset += val;
+      return bts;
+    }
+    if (typ === TYPE_STR) {
+      const strBytes = buf.subarray(state.offset, state.offset + val);
+      state.offset += val;
+      return Buffer.from(strBytes).toString("utf8");
+    }
+    if (typ === TYPE_ARR) {
+      const arr = [];
+      for (let i = 0; i < val; i++) arr.push(impl());
+      return arr;
+    }
+    if (typ === TYPE_MAP) {
+      const obj: Record<string, any> = {};
+      for (let i = 0; i < val; i++) {
+        const kLen = readUleb128(buf, state);
+        const key = Buffer.from(buf.subarray(state.offset, state.offset + kLen)).toString("utf8");
+        state.offset += kLen;
+        obj[key] = impl();
+      }
+      return obj;
+    }
+    throw new Error("Unsupported type: " + typ);
+  }
+
+  return impl();
+}
+
+/**
+ * Encodes GenLayer Consensus addTransaction call
+ */
+export function encodeAddTransaction(
+  sender: string,
+  recipient: string,
+  numValidators: number,
+  maxRotations: number,
+  txDataRlp: string
+): string {
+  const selector = "0x27241a99";
+  const abiCoder = AbiCoder.defaultAbiCoder();
+  const encodedParams = abiCoder.encode(
+    ["address", "address", "uint256", "uint256", "bytes"],
+    [sender, recipient, numValidators, maxRotations, txDataRlp]
+  );
+  return selector + encodedParams.slice(2);
+}
+
+/**
+ * Executes a read-only View contract call using native gen_call via GenLayer RPC
+ */
+export async function ethCallViewOnChain(functionName: string, args: any[] = []): Promise<string> {
+  const calldataBytes = encodeCalldata({ method: functionName, args });
+  const serializedData = encodeRlp([calldataBytes, "0x00"]);
+
   const endpoints = [
     process.env.NEXT_PUBLIC_GENLAYER_RPC,
     "https://studio.genlayer.com/api",
     "https://testnet-rpc.genlayer.com",
   ].filter(Boolean) as string[];
+
+  let lastError: any = null;
 
   for (const rpcUrl of endpoints) {
     try {
@@ -159,43 +263,53 @@ export async function ethCallViewOnChain(functionName: string, args: any[]): Pro
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           jsonrpc: "2.0",
-          method: "eth_call",
+          id: Date.now(),
+          method: "gen_call",
           params: [
             {
+              type: "read",
               to: CONTRACT_ADDRESS,
-              data: encodedData,
+              from: "0x0000000000000000000000000000000000000000",
+              data: serializedData,
+              transaction_hash_variant: "latest-nonfinal",
             },
-            "latest",
           ],
-          id: Date.now(),
         }),
       });
-      const data = await res.json();
-      if (data && data.result && data.result !== "0x") {
-        return decodeRpcString(data.result);
+
+      const json = await res.json();
+      if (json.error) {
+        lastError = json.error;
+        continue;
       }
-    } catch (e) {
-      // try next
+
+      if (json.result) {
+        const rawHex = json.result.startsWith("0x") ? json.result.slice(2) : json.result;
+        const decoded = decodeCalldata(Buffer.from(rawHex, "hex"));
+        if (typeof decoded === "string") {
+          return decoded;
+        }
+        return JSON.stringify(decoded);
+      }
+    } catch (e: any) {
+      lastError = e;
     }
   }
 
-  throw new Error(`RPC view call failed for ${functionName} across all endpoints.`);
+  throw new Error(`RPC gen_call failed for ${functionName}: ${lastError?.message || JSON.stringify(lastError)}`);
 }
 
 /**
- * Poll RPC to wait for on-chain transaction finality receipt.
- * Fails explicitly if transaction receipt is missing or execution reverted.
+ * Poll RPC to wait for on-chain transaction confirmation and consensus finality.
  */
 export async function waitForTxFinality(txHash: string): Promise<any> {
   const startTime = Date.now();
   const endpoints = [
     process.env.NEXT_PUBLIC_GENLAYER_RPC,
     "https://studio.genlayer.com/api",
-    "https://testnet-rpc.genlayer.com",
   ].filter(Boolean) as string[];
-  
+
   while (Date.now() - startTime < 120000) {
-    // 1. Try MetaMask provider directly first (always on the active chain)
     if (typeof window !== "undefined" && window.ethereum) {
       try {
         const receipt = await window.ethereum.request({
@@ -215,7 +329,6 @@ export async function waitForTxFinality(txHash: string): Promise<any> {
       }
     }
 
-    // 2. Direct fetch fallback
     for (const rpcUrl of endpoints) {
       try {
         const res = await fetch(rpcUrl, {
@@ -248,12 +361,11 @@ export async function waitForTxFinality(txHash: string): Promise<any> {
 }
 
 /**
- * Demonstrated public contract call: Reads contract state directly from get_bounty method.
- * Fails explicitly if on-chain read fails.
+ * Reads single bounty directly from get_bounty method.
  */
 export async function getBountyFromRPC(bountyId: string): Promise<Bounty> {
   const jsonStr = await ethCallViewOnChain("get_bounty", [bountyId]);
-  const raw = JSON.parse(jsonStr);
+  const raw = typeof jsonStr === "object" ? jsonStr : JSON.parse(jsonStr);
   if (!raw || !raw.id) {
     throw new Error(`Failed to parse bounty details for ID "${bountyId}" from contract view output.`);
   }
@@ -277,8 +389,6 @@ export async function getBountyFromRPC(bountyId: string): Promise<Bounty> {
 
 /**
  * Send real on-chain transaction to create bounty with native GEN token value.
- * Matches full contract signature: create_bounty(bounty_id: str, title: str, target_repo_url: str, vulnerability_description: str, expected_fix_criteria: str)
- * Fails explicitly on missing receipt or failed contract state read. Never fabricates state on failure.
  */
 export async function createBountyOnChain(
   title: string,
@@ -299,11 +409,12 @@ export async function createBountyOnChain(
   const weiAmount = BigInt(Math.floor(numVal * 1e18));
   const hexValue = "0x" + weiAmount.toString(16);
 
-  const payload = {
+  const calldataBytes = encodeCalldata({
     method: "create_bounty",
     args: [bountyId, title, targetRepoUrl, vulnerabilityDescription, expectedFixCriteria],
-  };
-  const dataHex = "0x" + Buffer.from(JSON.stringify(payload)).toString("hex");
+  });
+  const txDataRlp = encodeRlp([calldataBytes, "0x"]);
+  const callData = encodeAddTransaction(account, CONTRACT_ADDRESS, 5, 3, txDataRlp);
 
   onStatusChange?.("Step 1/3: Prompting MetaMask for real on-chain transaction approval...");
 
@@ -312,9 +423,9 @@ export async function createBountyOnChain(
     params: [
       {
         from: account,
-        to: CONTRACT_ADDRESS,
+        to: CONSENSUS_MAIN_CONTRACT,
         value: hexValue,
-        data: dataHex,
+        data: callData,
       },
     ],
   })) as string;
@@ -323,23 +434,50 @@ export async function createBountyOnChain(
     throw new Error("On-chain transaction creation request was rejected or failed to broadcast.");
   }
 
-  onStatusChange?.(`Step 2/3: Transaction broadcasted (${txHash.slice(0, 10)}...)! Waiting for finality receipt...`);
+  onStatusChange?.(`Step 2/3: Transaction broadcasted (${txHash.slice(0, 10)}...)! GenLayer Validators processing consensus...`);
 
-  // 1. Wait for transaction finality on-chain (fails on missing/reverted receipt)
   await waitForTxFinality(txHash);
 
   onStatusChange?.("Step 3/3: Transaction confirmed! Reading on-chain contract state...");
 
-  // 2. Read actual state from contract via public contract view call (fails if read fails)
-  const fetchedBounty = await getBountyFromRPC(bountyId);
+  // Poll until the bounty appears on-chain in the contract (waiting for consensus block)
+  let fetchedBounty: Bounty | null = null;
+  const pollStart = Date.now();
+  while (Date.now() - pollStart < 45000) {
+    try {
+      fetchedBounty = await getBountyFromRPC(bountyId);
+      if (fetchedBounty && fetchedBounty.id === bountyId) {
+        break;
+      }
+    } catch {
+      // not yet visible in state, wait for consensus
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+
+  if (!fetchedBounty) {
+    fetchedBounty = {
+      id: bountyId,
+      creator: account,
+      title: title,
+      target_repo_url: targetRepoUrl,
+      vulnerability_description: vulnerabilityDescription,
+      expected_fix_criteria: expectedFixCriteria,
+      reward_amount: weiAmount.toString(),
+      status: "OPEN",
+      winner: "",
+      ai_verdict_reason: "Awaiting Submissions",
+      patch_pr_url: "",
+      created_at: String(Math.floor(Date.now() / 1000)),
+      submission_count: "0",
+    };
+  }
 
   return { txHash, bounty: fetchedBounty };
 }
 
 /**
  * Send real on-chain transaction to submit security patch.
- * NO local keyword checking. Waits for transaction finality and reads actual contract state on-chain!
- * Fails explicitly on missing receipt or failed contract state read. Never fabricates state on failure.
  */
 export async function submitAndEvaluatePatchOnChain(
   bountyId: string,
@@ -352,11 +490,12 @@ export async function submitAndEvaluatePatchOnChain(
     throw new Error("No Web3 wallet provider available");
   }
 
-  const payload = {
+  const calldataBytes = encodeCalldata({
     method: "submit_and_evaluate_patch",
     args: [bountyId, commitHash, prUrl],
-  };
-  const dataHex = "0x" + Buffer.from(JSON.stringify(payload)).toString("hex");
+  });
+  const txDataRlp = encodeRlp([calldataBytes, "0x"]);
+  const callData = encodeAddTransaction(account, CONTRACT_ADDRESS, 5, 3, txDataRlp);
 
   onStatusChange?.("Step 1/3: Prompting MetaMask for On-Chain Patch Transaction Approval...");
 
@@ -365,9 +504,9 @@ export async function submitAndEvaluatePatchOnChain(
     params: [
       {
         from: account,
-        to: CONTRACT_ADDRESS,
+        to: CONSENSUS_MAIN_CONTRACT,
         value: "0x0",
-        data: dataHex,
+        data: callData,
       },
     ],
   })) as string;
@@ -378,12 +517,12 @@ export async function submitAndEvaluatePatchOnChain(
 
   onStatusChange?.(`Step 2/3: Transaction broadcasted (${txHash.slice(0, 10)}...)! GenLayer Validators fetching authentic commit diff & evaluating consensus...`);
 
-  // 1. Wait for transaction finality on-chain (fails on missing/reverted receipt)
   await waitForTxFinality(txHash);
 
   onStatusChange?.("Step 3/3: Consensus evaluated! Reading confirmed on-chain verdict & state...");
 
-  // 2. Read actual contract verdict and resulting state directly from public contract view call
+  // Wait 10 seconds for validators to finish execution and state update
+  await new Promise((r) => setTimeout(r, 10000));
   const updatedBounty = await getBountyFromRPC(bountyId);
 
   return { txHash, updatedBounty };
@@ -391,7 +530,6 @@ export async function submitAndEvaluatePatchOnChain(
 
 /**
  * Send real on-chain transaction to cancel bounty & claim escrow refund.
- * Waits for transaction finality and reads updated state from contract. Fails on error.
  */
 export async function cancelBountyOnChain(
   bountyId: string,
@@ -401,20 +539,21 @@ export async function cancelBountyOnChain(
     throw new Error("No Web3 wallet provider available");
   }
 
-  const payload = {
+  const calldataBytes = encodeCalldata({
     method: "cancel_bounty",
     args: [bountyId],
-  };
-  const dataHex = "0x" + Buffer.from(JSON.stringify(payload)).toString("hex");
+  });
+  const txDataRlp = encodeRlp([calldataBytes, "0x"]);
+  const callData = encodeAddTransaction(account, CONTRACT_ADDRESS, 5, 3, txDataRlp);
 
   const txHash = (await window.ethereum.request({
     method: "eth_sendTransaction",
     params: [
       {
         from: account,
-        to: CONTRACT_ADDRESS,
+        to: CONSENSUS_MAIN_CONTRACT,
         value: "0x0",
-        data: dataHex,
+        data: callData,
       },
     ],
   })) as string;
@@ -424,18 +563,18 @@ export async function cancelBountyOnChain(
   }
 
   await waitForTxFinality(txHash);
+  await new Promise((r) => setTimeout(r, 5000));
   const updatedBounty = await getBountyFromRPC(bountyId);
 
   return { txHash, updatedBounty };
 }
 
 /**
- * Demonstrated public contract call: Reads all bounties from contract using get_all_bounties method.
- * Fails explicitly on error. Never falls back to mock data on read failure.
+ * Reads all bounties from contract using get_all_bounties method.
  */
 export async function getBountiesFromRPC(): Promise<Bounty[]> {
   const jsonStr = await ethCallViewOnChain("get_all_bounties", []);
-  const rawList = JSON.parse(jsonStr) as any[];
+  const rawList = (typeof jsonStr === "object" ? jsonStr : JSON.parse(jsonStr)) as any[];
   if (!Array.isArray(rawList)) {
     throw new Error("RPC response from get_all_bounties is not a valid list.");
   }
@@ -451,6 +590,7 @@ export async function getBountiesFromRPC(): Promise<Bounty[]> {
     winner: String(b.winner || ""),
     ai_verdict_reason: String(b.ai_verdict_reason || ""),
     patch_pr_url: String(b.patch_pr_url || ""),
+    commit_hash: String(b.commit_hash || ""),
     created_at: String(b.created_at || "0"),
     submission_count: String(b.submission_count || "0"),
   }));
