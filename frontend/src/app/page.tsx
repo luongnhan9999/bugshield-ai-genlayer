@@ -6,7 +6,7 @@ import { Footer } from "../components/Footer";
 import { BountyCard } from "../components/BountyCard";
 import { CreateBountyModal } from "../components/CreateBountyModal";
 import { SubmitPatchModal } from "../components/SubmitPatchModal";
-import { Bounty, getBountiesFromRPC } from "../lib/genlayer";
+import { Bounty, getBountiesFromRPC, formatRewardAmount } from "../lib/genlayer";
 import { Search, Shield, Cpu, ExternalLink, Sparkles, Crown, Zap } from "lucide-react";
 
 export default function Home() {
@@ -47,7 +47,7 @@ export default function Home() {
     const active = bounties.filter((b) => b.status === "OPEN").length;
     const resolved = bounties.filter((b) => b.status === "RESOLVED").length;
     const totalEscrow = bounties
-      .reduce((sum, b) => sum + parseFloat(b.reward_amount || "0"), 0)
+      .reduce((sum, b) => sum + parseFloat(formatRewardAmount(b.reward_amount) || "0"), 0)
       .toFixed(1);
     return { total, active, resolved, totalEscrow };
   }, [bounties]);

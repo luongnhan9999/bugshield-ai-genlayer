@@ -1,4 +1,4 @@
-import { encodeRlp, AbiCoder } from "ethers";
+import { encodeRlp, AbiCoder, formatEther } from "ethers";
 
 declare global {
   interface Window {
@@ -92,6 +92,24 @@ export async function connectWallet(): Promise<string | null> {
   } catch (error) {
     console.error("Error connecting wallet:", error);
     return null;
+  }
+}
+
+/**
+ * Format raw token reward amount from wei (1e18) to human-readable GEN (e.g. 1, 3.5, 15)
+ */
+export function formatRewardAmount(rawAmount: string | number): string {
+  if (!rawAmount) return "0";
+  try {
+    const str = String(rawAmount).trim();
+    if (str.length > 12) {
+      const formatted = formatEther(str);
+      const num = parseFloat(formatted);
+      return isNaN(num) ? formatted : num.toString();
+    }
+    return str;
+  } catch {
+    return String(rawAmount);
   }
 }
 
@@ -376,7 +394,7 @@ export async function getBountyFromRPC(bountyId: string): Promise<Bounty> {
     target_repo_url: String(raw.target_repo_url || ""),
     vulnerability_description: String(raw.vulnerability_description || ""),
     expected_fix_criteria: String(raw.expected_fix_criteria || ""),
-    reward_amount: String(raw.reward_amount || "0"),
+    reward_amount: formatRewardAmount(raw.reward_amount || "0"),
     status: String(raw.status || "OPEN") as "OPEN" | "RESOLVED" | "CANCELLED",
     winner: String(raw.winner || ""),
     ai_verdict_reason: String(raw.ai_verdict_reason || ""),
@@ -463,7 +481,7 @@ export async function createBountyOnChain(
       target_repo_url: targetRepoUrl,
       vulnerability_description: vulnerabilityDescription,
       expected_fix_criteria: expectedFixCriteria,
-      reward_amount: weiAmount.toString(),
+      reward_amount: formatRewardAmount(weiAmount.toString()),
       status: "OPEN",
       winner: "",
       ai_verdict_reason: "Awaiting Submissions",
@@ -585,7 +603,7 @@ export async function getBountiesFromRPC(): Promise<Bounty[]> {
     target_repo_url: String(b.target_repo_url),
     vulnerability_description: String(b.vulnerability_description || ""),
     expected_fix_criteria: String(b.expected_fix_criteria || ""),
-    reward_amount: String(b.reward_amount),
+    reward_amount: formatRewardAmount(b.reward_amount || "0"),
     status: String(b.status) as "OPEN" | "RESOLVED" | "CANCELLED",
     winner: String(b.winner || ""),
     ai_verdict_reason: String(b.ai_verdict_reason || ""),

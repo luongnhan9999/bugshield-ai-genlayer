@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Bounty, cancelBountyOnChain } from "../lib/genlayer";
+import { Bounty, cancelBountyOnChain, formatRewardAmount } from "../lib/genlayer";
 import {
   ShieldAlert,
   CheckCircle2,
@@ -150,7 +150,7 @@ export const BountyCard: React.FC<BountyCardProps> = ({
             <span className="text-xs text-slate-400 font-medium">Escrow Reward</span>
           </div>
           <span className="text-lg font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-300 via-purple-300 to-cyan-300">
-            {bounty.reward_amount} GEN
+            {formatRewardAmount(bounty.reward_amount)} GEN
           </span>
         </div>
 
