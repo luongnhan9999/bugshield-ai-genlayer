@@ -37,7 +37,7 @@ export const GENLAYER_TESTNET_CONFIG = {
 
 // Valid 40-hex character Ethereum / GenLayer Contract Address
 export const CONTRACT_ADDRESS =
-  process.env.VITE_CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "0xD56a1B2641F963fBCbA9bDAD4Ed7BDD35Cbfd9fE";
+  process.env.VITE_CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "0x44e0Cf896c434B57F1439A1d1699C27A50AD87D0";
 
 export const INITIAL_BOUNTIES: Bounty[] = [];
 
