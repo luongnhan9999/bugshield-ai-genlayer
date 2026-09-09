@@ -27,15 +27,15 @@ export const CreateBountyModal: React.FC<CreateBountyModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Quick Demo Auto-Fill for Judges / Evaluators
+  // Quick Demo Auto-Fill for Judges / Evaluators with Real GitHub Repository
   const handleQuickFillDemo = () => {
-    setTitle("Flash Loan Oracle Price Manipulation in Lending Pool");
-    setTargetRepoUrl("https://github.com/bugshield-ai/lending-protocol-v2");
+    setTitle("Token Reward Escrow Precision Inconsistency");
+    setTargetRepoUrl("https://github.com/luongnhan9999/bugshield-ai-genlayer");
     setVulnerabilityDescription(
-      "The calculateCollateralValue() function relies on single-block spot price from UniswapV2 pair, enabling flash loan attackers to artificially manipulate price ratios and execute bad debt liquidations."
+      "Escrow reward values were exposed in raw 10^18 wei strings, leading to UI display inconsistencies and potential precision truncation across reward accounting."
     );
     setExpectedFixCriteria(
-      "Replace spot price query with Chainlink TWAP Oracle or Pyth Network multi-block price feed validator."
+      "Format token rewards using standard 18-decimal ether conversion to display human-readable GEN units (formatEther / formatRewardAmount)."
     );
     setRewardAmount("3.5");
   };

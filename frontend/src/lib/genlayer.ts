@@ -19,28 +19,29 @@ export interface Bounty {
   ai_verdict_reason: string;
   patch_pr_url: string;
   commit_hash?: string;
+  last_submitter?: string;
   created_at?: string;
   submission_count?: string;
 }
 
 export const GENLAYER_TESTNET_CONFIG = {
-  chainId: "0xF22F", // 61999 in hex (0xF22F)
-  chainName: "GenLayer Testnet",
-  rpcUrls: [process.env.NEXT_PUBLIC_GENLAYER_RPC || "https://studio.genlayer.com/api"],
+  chainId: "0x107D", // 4221 in hex (GenLayer Asimov Testnet)
+  chainName: "GenLayer Asimov Testnet",
+  rpcUrls: [process.env.NEXT_PUBLIC_GENLAYER_RPC || "https://rpc-asimov.genlayer.com"],
   nativeCurrency: {
     name: "GenLayer Token",
     symbol: "GEN",
     decimals: 18,
   },
-  blockExplorerUrls: ["https://scan.genlayer.com"],
+  blockExplorerUrls: ["https://scan-asimov.genlayer.com"],
 };
 
 // Target Intelligent Contract Address
 export const CONTRACT_ADDRESS =
-  process.env.VITE_CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "0x44e0Cf896c434B57F1439A1d1699C27A50AD87D0";
+  process.env.VITE_CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "0xB10cBbeE6D259A5D4eB254591a6a777Bcf413a78";
 
-// GenLayer Consensus Main Contract (transactions are submitted here to trigger validator consensus)
-export const CONSENSUS_MAIN_CONTRACT = "0x0000000000000000000000000000000000000000";
+// GenLayer Consensus Main Contract on Asimov Testnet
+export const CONSENSUS_MAIN_CONTRACT = "0x6CAFF6769d70824745AD895663409DC70aB5B28E";
 
 export const INITIAL_BOUNTIES: Bounty[] = [];
 
@@ -268,8 +269,8 @@ export async function ethCallViewOnChain(functionName: string, args: any[] = [])
 
   const endpoints = [
     process.env.NEXT_PUBLIC_GENLAYER_RPC,
+    "https://rpc-asimov.genlayer.com",
     "https://studio.genlayer.com/api",
-    "https://testnet-rpc.genlayer.com",
   ].filter(Boolean) as string[];
 
   let lastError: any = null;
@@ -324,6 +325,7 @@ export async function waitForTxFinality(txHash: string): Promise<any> {
   const startTime = Date.now();
   const endpoints = [
     process.env.NEXT_PUBLIC_GENLAYER_RPC,
+    "https://rpc-asimov.genlayer.com",
     "https://studio.genlayer.com/api",
   ].filter(Boolean) as string[];
 
@@ -378,31 +380,57 @@ export async function waitForTxFinality(txHash: string): Promise<any> {
   throw new Error(`Transaction finality receipt timed out on-chain (Tx: ${txHash})`);
 }
 
+function safeParseJson(data: any): any {
+  if (data === null || data === undefined) return null;
+  if (typeof data === "object") return data;
+  if (typeof data !== "string") return data;
+  const trimmed = data.trim();
+  if (trimmed === "" || trimmed === "{}") return {};
+  try {
+    let parsed = JSON.parse(trimmed);
+    while (typeof parsed === "string") {
+      parsed = JSON.parse(parsed);
+    }
+    return parsed;
+  } catch {
+    try {
+      const clean = trimmed.replace(/\\"/g, '"').replace(/^"|"$/g, "");
+      return JSON.parse(clean);
+    } catch {
+      return null;
+    }
+  }
+}
+
 /**
  * Reads single bounty directly from get_bounty method.
  */
-export async function getBountyFromRPC(bountyId: string): Promise<Bounty> {
-  const jsonStr = await ethCallViewOnChain("get_bounty", [bountyId]);
-  const raw = typeof jsonStr === "object" ? jsonStr : JSON.parse(jsonStr);
-  if (!raw || !raw.id) {
-    throw new Error(`Failed to parse bounty details for ID "${bountyId}" from contract view output.`);
+export async function getBountyFromRPC(bountyId: string): Promise<Bounty | null> {
+  try {
+    const jsonStr = await ethCallViewOnChain("get_bounty", [bountyId]);
+    const raw = safeParseJson(jsonStr);
+    if (!raw || !raw.id || raw.id !== bountyId) {
+      return null;
+    }
+    return {
+      id: String(raw.id),
+      creator: String(raw.creator || ""),
+      title: String(raw.title || ""),
+      target_repo_url: String(raw.target_repo_url || ""),
+      vulnerability_description: String(raw.vulnerability_description || ""),
+      expected_fix_criteria: String(raw.expected_fix_criteria || ""),
+      reward_amount: formatRewardAmount(raw.reward_amount || "0"),
+      status: String(raw.status || "OPEN") as "OPEN" | "RESOLVED" | "CANCELLED",
+      winner: String(raw.winner || ""),
+      ai_verdict_reason: String(raw.ai_verdict_reason || ""),
+      patch_pr_url: String(raw.patch_pr_url || ""),
+      commit_hash: String(raw.commit_hash || ""),
+      created_at: String(raw.created_at || "0"),
+      submission_count: String(raw.submission_count || "0"),
+    };
+  } catch {
+    return null;
   }
-  return {
-    id: String(raw.id),
-    creator: String(raw.creator || ""),
-    title: String(raw.title || ""),
-    target_repo_url: String(raw.target_repo_url || ""),
-    vulnerability_description: String(raw.vulnerability_description || ""),
-    expected_fix_criteria: String(raw.expected_fix_criteria || ""),
-    reward_amount: formatRewardAmount(raw.reward_amount || "0"),
-    status: String(raw.status || "OPEN") as "OPEN" | "RESOLVED" | "CANCELLED",
-    winner: String(raw.winner || ""),
-    ai_verdict_reason: String(raw.ai_verdict_reason || ""),
-    patch_pr_url: String(raw.patch_pr_url || ""),
-    commit_hash: String(raw.commit_hash || ""),
-    created_at: String(raw.created_at || "0"),
-    submission_count: String(raw.submission_count || "0"),
-  };
 }
 
 /**
@@ -441,7 +469,7 @@ export async function createBountyOnChain(
     params: [
       {
         from: account,
-        to: CONSENSUS_MAIN_CONTRACT,
+        to: CONTRACT_ADDRESS,
         value: hexValue,
         data: callData,
       },
@@ -522,7 +550,7 @@ export async function submitAndEvaluatePatchOnChain(
     params: [
       {
         from: account,
-        to: CONSENSUS_MAIN_CONTRACT,
+        to: CONTRACT_ADDRESS,
         value: "0x0",
         data: callData,
       },
@@ -543,7 +571,7 @@ export async function submitAndEvaluatePatchOnChain(
   await new Promise((r) => setTimeout(r, 10000));
   const updatedBounty = await getBountyFromRPC(bountyId);
 
-  return { txHash, updatedBounty };
+  return { txHash, updatedBounty: updatedBounty || { id: bountyId } as Bounty };
 }
 
 /**
@@ -569,7 +597,7 @@ export async function cancelBountyOnChain(
     params: [
       {
         from: account,
-        to: CONSENSUS_MAIN_CONTRACT,
+        to: CONTRACT_ADDRESS,
         value: "0x0",
         data: callData,
       },
@@ -584,32 +612,79 @@ export async function cancelBountyOnChain(
   await new Promise((r) => setTimeout(r, 5000));
   const updatedBounty = await getBountyFromRPC(bountyId);
 
-  return { txHash, updatedBounty };
+  return { txHash, updatedBounty: updatedBounty || { id: bountyId, status: "CANCELLED" } as Bounty };
 }
 
 /**
  * Reads all bounties from contract using get_all_bounties method.
  */
 export async function getBountiesFromRPC(): Promise<Bounty[]> {
-  const jsonStr = await ethCallViewOnChain("get_all_bounties", []);
-  const rawList = (typeof jsonStr === "object" ? jsonStr : JSON.parse(jsonStr)) as any[];
-  if (!Array.isArray(rawList)) {
-    throw new Error("RPC response from get_all_bounties is not a valid list.");
+  try {
+    const jsonStr = await ethCallViewOnChain("get_all_bounties", []);
+    const rawList = safeParseJson(jsonStr);
+    if (!Array.isArray(rawList)) {
+      return [];
+    }
+    return rawList.map((b) => ({
+      id: String(b.id),
+      creator: String(b.creator || ""),
+      title: String(b.title || ""),
+      target_repo_url: String(b.target_repo_url || ""),
+      vulnerability_description: String(b.vulnerability_description || ""),
+      expected_fix_criteria: String(b.expected_fix_criteria || ""),
+      reward_amount: formatRewardAmount(b.reward_amount || "0"),
+      status: String(b.status || "OPEN") as "OPEN" | "RESOLVED" | "CANCELLED",
+      winner: String(b.winner || ""),
+      ai_verdict_reason: String(b.ai_verdict_reason || ""),
+      patch_pr_url: String(b.patch_pr_url || ""),
+      commit_hash: String(b.commit_hash || ""),
+      last_submitter: String(b.last_submitter || ""),
+      created_at: String(b.created_at || "0"),
+      submission_count: String(b.submission_count || "0"),
+    }));
+  } catch {
+    return [];
   }
-  return rawList.map((b) => ({
-    id: String(b.id),
-    creator: String(b.creator),
-    title: String(b.title),
-    target_repo_url: String(b.target_repo_url),
-    vulnerability_description: String(b.vulnerability_description || ""),
-    expected_fix_criteria: String(b.expected_fix_criteria || ""),
-    reward_amount: formatRewardAmount(b.reward_amount || "0"),
-    status: String(b.status) as "OPEN" | "RESOLVED" | "CANCELLED",
-    winner: String(b.winner || ""),
-    ai_verdict_reason: String(b.ai_verdict_reason || ""),
-    patch_pr_url: String(b.patch_pr_url || ""),
-    commit_hash: String(b.commit_hash || ""),
-    created_at: String(b.created_at || "0"),
-    submission_count: String(b.submission_count || "0"),
-  }));
+}
+
+/**
+ * HUNTER PROTECTION: Appeal a rejected patch adjudication via the consensus tribunal.
+ */
+export async function appealRejectionOnChain(
+  bountyId: string,
+  hunterJustification: string,
+  account: string
+): Promise<{ txHash: string; updatedBounty: Bounty }> {
+  if (typeof window === "undefined" || !window.ethereum) {
+    throw new Error("MetaMask or compatible Web3 wallet not found.");
+  }
+
+  const calldataBytes = encodeCalldata({
+    method: "appeal_rejection",
+    args: [bountyId, hunterJustification],
+  });
+  const txDataRlp = encodeRlp([calldataBytes, "0x"]);
+  const callData = encodeAddTransaction(account, CONTRACT_ADDRESS, 5, 3, txDataRlp);
+
+  const txHash = (await window.ethereum.request({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: CONTRACT_ADDRESS,
+        value: "0x0",
+        data: callData,
+      },
+    ],
+  })) as string;
+
+  if (!txHash) {
+    throw new Error("On-chain appeal transaction request was rejected or failed to broadcast.");
+  }
+
+  await waitForTxFinality(txHash);
+  await new Promise((r) => setTimeout(r, 6000));
+  const updatedBounty = await getBountyFromRPC(bountyId);
+
+  return { txHash, updatedBounty: updatedBounty || ({ id: bountyId } as Bounty) };
 }

@@ -7,7 +7,7 @@ import { BountyCard } from "../components/BountyCard";
 import { CreateBountyModal } from "../components/CreateBountyModal";
 import { SubmitPatchModal } from "../components/SubmitPatchModal";
 import { Bounty, getBountiesFromRPC, formatRewardAmount } from "../lib/genlayer";
-import { Search, Shield, Cpu, ExternalLink, Sparkles, Crown, Zap } from "lucide-react";
+import { Search, Shield, Cpu, ExternalLink, Sparkles, Crown, Zap, RefreshCw } from "lucide-react";
 
 export default function Home() {
   const [account, setAccount] = useState<string | null>(null);
@@ -118,15 +118,15 @@ export default function Home() {
 
             <div className="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-400">
               <a
-                href="https://studio.genlayer.com/api"
+                href="https://rpc-asimov.genlayer.com"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center hover:text-cyan-400 transition-colors"
               >
-                <Cpu className="w-4 h-4 mr-1 text-cyan-400" /> RPC: https://studio.genlayer.com/api
+                <Cpu className="w-4 h-4 mr-1 text-cyan-400" /> RPC: https://rpc-asimov.genlayer.com
               </a>
               <span>•</span>
-              <span>Chain ID: 61999</span>
+              <span>Chain ID: 4221 (Asimov Testnet)</span>
               <span>•</span>
               <a
                 href="https://docs.genlayer.com"
@@ -184,21 +184,43 @@ export default function Home() {
             />
           </div>
 
-          {/* Filter Status Tabs */}
-          <div className="flex items-center p-1 bg-card border border-border rounded-xl space-x-1 text-xs font-semibold w-full sm:w-auto justify-center">
-            {["ALL", "OPEN", "RESOLVED", "CANCELLED"].map((status) => (
-              <button
-                key={status}
-                onClick={() => setFilterStatus(status)}
-                className={`px-4 py-2 rounded-lg transition-all ${
-                  filterStatus === status
-                    ? "bg-indigo-600 text-white shadow-md"
-                    : "text-slate-400 hover:text-white hover:bg-slate-800/50"
-                }`}
-              >
-                {status}
-              </button>
-            ))}
+          {/* Filter Status Tabs & On-Chain Sync */}
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-center">
+            <div className="flex items-center p-1 bg-card border border-border rounded-xl space-x-1 text-xs font-semibold">
+              {["ALL", "OPEN", "RESOLVED", "CANCELLED"].map((status) => (
+                <button
+                  key={status}
+                  onClick={() => setFilterStatus(status)}
+                  className={`px-4 py-2 rounded-lg transition-all ${
+                    filterStatus === status
+                      ? "bg-indigo-600 text-white shadow-md"
+                      : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+                  }`}
+                >
+                  {status}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={async () => {
+                setIsLoadingRpc(true);
+                setRpcError(null);
+                try {
+                  const data = await getBountiesFromRPC();
+                  setBounties(data);
+                } catch {
+                  setBounties([]);
+                } finally {
+                  setIsLoadingRpc(false);
+                }
+              }}
+              disabled={isLoadingRpc}
+              title="Re-sync with on-chain contract state"
+              className="p-2.5 bg-card border border-border rounded-xl text-slate-400 hover:text-cyan-300 hover:border-cyan-500/40 transition-all disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoadingRpc ? "animate-spin text-cyan-400" : ""}`} />
+            </button>
           </div>
         </div>
 

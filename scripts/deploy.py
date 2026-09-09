@@ -1,36 +1,46 @@
 import os
 import sys
+from genlayer_py import create_client, testnet_asimov
+from genlayer_py.accounts.account import create_account
+from genlayer_py.types import TransactionStatus
 
 def main():
-    rpc_url = os.getenv("GENLAYER_RPC_URL", "https://testnet-rpc.genlayer.com")
+    rpc_url = os.getenv("GENLAYER_RPC_URL", "https://rpc-asimov.genlayer.com")
     private_key = os.getenv("GENLAYER_PRIVATE_KEY")
 
     if not private_key:
-        print("[ERROR] Please set GENLAYER_PRIVATE_KEY in your environment variables.")
-        print("Example: export GENLAYER_PRIVATE_KEY=0x... or set GENLAYER_PRIVATE_KEY=0x... in .env")
+        print("[ERROR] Please provide GENLAYER_PRIVATE_KEY in your environment.")
+        print("Usage: GENLAYER_PRIVATE_KEY=0x... python scripts/deploy.py")
         sys.exit(1)
 
-    try:
-        from genlayer_py import create_client, Account
-        client = create_client(rpc_url)
-        account = Account.from_key(private_key)
+    account = create_account(private_key)
+    print(f"Deployer Address: {account.address}")
+    print(f"Connecting to GenLayer Asimov Testnet ({rpc_url})...")
+    
+    client = create_client(chain=testnet_asimov, endpoint=rpc_url, account=account)
 
-        with open("contracts/bug_shield.py", "r", encoding="utf-8") as f:
-            contract_code = f.read()
+    contract_path = os.path.join(os.path.dirname(__file__), "..", "contracts", "bugshield.py")
+    with open(contract_path, "r", encoding="utf-8") as f:
+        contract_code = f.read()
 
-        print(f"Deploying BugShield Intelligent Contract to GenLayer Testnet ({rpc_url})...")
-        tx_hash = client.deploy_contract(
-            account=account,
-            code=contract_code,
-            args=[]
-        )
-        print(f"[SUCCESS] Contract deployed successfully!")
-        print(f"Tx Hash: {tx_hash}")
-    except ImportError:
-        print("[INFO] genlayer_py SDK not installed locally. Simulating contract deployment...")
-        print(f"Target Network RPC: {rpc_url}")
-        print("Reading contract code from contracts/bug_shield.py...")
-        print("[SUCCESS] Simulated Deploy Success! Mock Contract Address: 0xBugShieldGenLayerTestnetAddress61999")
+    print("Deploying BugShield Intelligent Contract directly on-chain...")
+    tx_hash = client.deploy_contract(
+        code=contract_code,
+        account=account,
+        args=[]
+    )
+    print(f"Deployment Transaction Submitted! Hash: {tx_hash}")
+
+    print("Waiting for on-chain validator consensus and finality...")
+    receipt = client.wait_for_transaction_receipt(
+        transaction_hash=tx_hash,
+        status=TransactionStatus.FINALIZED
+    )
+
+    contract_address = receipt.get("contract_address") or receipt.get("address")
+    print(f"[SUCCESS] BugShield Intelligent Contract Deployed Successfully!")
+    print(f"On-Chain Contract Address: {contract_address}")
+    print(f"Transaction Receipt Status: {receipt.get('status')}")
 
 if __name__ == "__main__":
     main()

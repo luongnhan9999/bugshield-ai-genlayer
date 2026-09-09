@@ -26,16 +26,16 @@ export const SubmitPatchModal: React.FC<SubmitPatchModalProps> = ({
 
   if (!isOpen || !bounty) return null;
 
-  // Judge Demo Quick Fill: Valid Patch (Triggers AI Approval & Instant Payout on-chain)
+  // Judge Demo Quick Fill: Valid Patch (Matches criteria and triggers on-chain approval & payout)
   const handleQuickFillValid = () => {
-    setPrUrl(`https://github.com/bugshield-ai/demo-repo/pull/${Math.floor(Math.random() * 100) + 20}`);
-    setCommitHash("e4d9c72a8b3f1e567890abcd1234ef5678901234");
+    setPrUrl("https://github.com/luongnhan9999/bugshield-ai-genlayer/commit/18a13a22cbbf71c8aefda3c7c13ed883180105b7");
+    setCommitHash("18a13a22cbbf71c8aefda3c7c13ed883180105b7");
   };
 
-  // Judge Demo Quick Fill: Invalid Patch (Triggers AI Rejection without Locking Escrow on-chain)
+  // Judge Demo Quick Fill: Invalid Patch (Authentic git diff exists but does NOT solve criteria, triggering technical AI rejection)
   const handleQuickFillInvalid = () => {
-    setPrUrl(`https://github.com/bugshield-ai/demo-repo/pull/${Math.floor(Math.random() * 100) + 20}`);
-    setCommitHash("b1a2c3d4e5f67890123456789abcdef012345678");
+    setPrUrl("https://github.com/luongnhan9999/bugshield-ai-genlayer/commit/5e570cfcfa6a9fd1119294928b93ddd04696501b");
+    setCommitHash("5e570cfcfa6a9fd1119294928b93ddd04696501b");
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

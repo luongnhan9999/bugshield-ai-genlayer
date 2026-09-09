@@ -1,26 +1,36 @@
 import os
 import sys
+import json
+from genlayer_py import create_client, testnet_asimov
+from genlayer_py.accounts.account import create_account
 
 def main():
-    contract_address = os.getenv("NEXT_PUBLIC_CONTRACT_ADDRESS", "0xBugShieldGenLayerTestnetAddress61999")
-    rpc_url = os.getenv("GENLAYER_RPC_URL", "https://testnet-rpc.genlayer.com")
+    contract_address = os.getenv("NEXT_PUBLIC_CONTRACT_ADDRESS")
+    rpc_url = os.getenv("GENLAYER_RPC_URL", "https://rpc-asimov.genlayer.com")
+    private_key = os.getenv("GENLAYER_PRIVATE_KEY")
 
-    print("=== BugShield AI GenLayer Intelligent Contract Test Script ===")
-    print(f"Contract Address: {contract_address}")
-    print(f"GenLayer RPC Endpoint: {rpc_url}")
-    print("\n1. Testing Bounty Creation...")
-    print("   - Title: Reentrancy vulnerability in Vault.sol")
-    print("   - Target Repo: https://github.com/example/web3-vault")
-    print("   - Escrow Reward: 5.0 GEN")
-    print("   -> Transaction Sent! (Bounty ID: 0)")
+    if not contract_address:
+        print("[ERROR] NEXT_PUBLIC_CONTRACT_ADDRESS is required.")
+        sys.exit(1)
 
-    print("\n2. Testing Patch Submission & Validator AI Consensus Audit...")
-    print("   - PR URL: https://github.com/example/web3-vault/pull/42")
-    print("   - Code Patch Diff: ReentrancyGuard nonReentrant modifier applied.")
-    print("   -> Executing gl.exec_prompt() on GenLayer Validators...")
-    print("   -> AI Verdict Result: APPROVED")
-    print("   -> Reason: Patch correctly implements reentrancy protection and state updates are executed prior to external call.")
-    print("\n=== Test Completed Successfully ===")
+    print(f"Target Contract: {contract_address}")
+    print(f"Network: GenLayer Asimov Testnet ({rpc_url})")
+
+    account = create_account(private_key) if private_key else None
+    client = create_client(chain=testnet_asimov, endpoint=rpc_url, account=account)
+
+    print("\nReading active bounties on-chain...")
+    try:
+        bounties_raw = client.read_contract(
+            address=contract_address,
+            function_name="get_all_bounties",
+            args=[]
+        )
+        bounties = json.loads(bounties_raw) if isinstance(bounties_raw, str) else bounties_raw
+        print(f"Active bounties found: {len(bounties)}")
+        print(json.dumps(bounties, indent=2))
+    except Exception as e:
+        print(f"Failed to read contract: {e}")
 
 if __name__ == "__main__":
     main()

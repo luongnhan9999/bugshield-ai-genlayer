@@ -2,7 +2,7 @@
 
 import React, { useEffect } from "react";
 import { ShieldCheck, Cpu, Wallet, LogOut, Sparkles, CheckCircle } from "lucide-react";
-import { connectWallet, getConnectedAccount } from "../lib/genlayer";
+import { connectWallet, getConnectedAccount, CONTRACT_ADDRESS } from "../lib/genlayer";
 
 interface HeaderProps {
   account: string | null;
@@ -67,6 +67,9 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
                   <Cpu className="w-3 h-3 mr-1 animate-pulse text-cyan-400" />
                   GenLayer Testnet
+                </span>
+                <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-mono bg-slate-800/80 text-slate-300 border border-slate-700/60" title={`Active Contract Address: ${CONTRACT_ADDRESS}`}>
+                  Contract: {CONTRACT_ADDRESS.slice(0, 6)}...{CONTRACT_ADDRESS.slice(-4)}
                 </span>
               </div>
               <p className="text-xs text-slate-400 font-medium">

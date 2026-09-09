@@ -177,12 +177,12 @@ export const Footer: React.FC = () => {
             <span>Privacy Policy</span>
             <span>Terms of Audit Service</span>
             <a
-              href="https://studio.genlayer.com/api"
+              href="https://rpc-asimov.genlayer.com"
               target="_blank"
               rel="noopener noreferrer"
               className="text-cyan-400 hover:underline flex items-center"
             >
-              RPC Endpoint <ExternalLink className="w-3 h-3 ml-1" />
+              RPC: rpc-asimov.genlayer.com <ExternalLink className="w-3 h-3 ml-1" />
             </a>
           </div>
         </div>
