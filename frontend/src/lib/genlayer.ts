@@ -38,7 +38,7 @@ export const GENLAYER_TESTNET_CONFIG = {
 
 // Target Intelligent Contract Address
 export const CONTRACT_ADDRESS =
-  process.env.VITE_CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "0xB10cBbeE6D259A5D4eB254591a6a777Bcf413a78";
+  process.env.VITE_CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "0x0dB6C0e34F0Ff55ba4372b540f340aA494E57888";
 
 // GenLayer Consensus Main Contract on Asimov Testnet
 export const CONSENSUS_MAIN_CONTRACT = "0x6CAFF6769d70824745AD895663409DC70aB5B28E";
