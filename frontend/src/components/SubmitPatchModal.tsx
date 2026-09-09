@@ -20,6 +20,7 @@ export const SubmitPatchModal: React.FC<SubmitPatchModalProps> = ({
   account,
 }) => {
   const [patchCode, setPatchCode] = useState("");
+  const [commitHash, setCommitHash] = useState("");
   const [prUrl, setPrUrl] = useState("");
   const [isAuditing, setIsAuditing] = useState(false);
   const [auditStep, setAuditStep] = useState<string>("");
@@ -29,6 +30,7 @@ export const SubmitPatchModal: React.FC<SubmitPatchModalProps> = ({
   // Judge Demo Quick Fill: Valid Patch (Triggers AI Approval & Instant Payout on-chain)
   const handleQuickFillValid = () => {
     setPrUrl(`https://github.com/bugshield-ai/demo-repo/pull/${Math.floor(Math.random() * 100) + 20}`);
+    setCommitHash("e4d9c72a8b3f1e567890abcd1234ef5678901234");
     setPatchCode(`// Valid Security Patch Fix
 // File: contracts/VaultEscrow.sol
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
@@ -55,6 +57,7 @@ contract VaultEscrow is ReentrancyGuard {
   // Judge Demo Quick Fill: Invalid Patch (Triggers AI Rejection without Locking Escrow on-chain)
   const handleQuickFillInvalid = () => {
     setPrUrl(`https://github.com/bugshield-ai/demo-repo/pull/${Math.floor(Math.random() * 100) + 20}`);
+    setCommitHash("b1a2c3d4e5f67890123456789abcdef012345678");
     setPatchCode(`// Incomplete Patch - Missing reentrancy guard or state checks
 // File: contracts/VaultEscrow.sol
 
@@ -72,8 +75,13 @@ contract VaultEscrow {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!patchCode || !prUrl) {
-      alert("Please provide both code patch diff and Pull Request URL.");
+    if (!commitHash || !prUrl) {
+      alert("Please provide both the Bound Git Commit Hash (SHA) and Pull Request URL.");
+      return;
+    }
+
+    if (commitHash.trim().length < 7) {
+      alert("Invalid Git Commit Hash: Minimum 7 hex characters required to bind an immutable commit.");
       return;
     }
 
@@ -86,12 +94,12 @@ contract VaultEscrow {
 
     try {
       setAuditStep("Step 1/3: Prompting MetaMask for On-Chain Patch Transaction Approval...");
-      const result = await submitAndEvaluatePatchOnChain(bounty.id, patchCode, prUrl, account);
+      const result = await submitAndEvaluatePatchOnChain(bounty.id, commitHash.trim(), prUrl.trim(), patchCode.trim(), account);
 
-      setAuditStep("Step 2/3: Transaction broadcasted! Waiting for GenLayer Validators On-Chain Finality Receipt...");
+      setAuditStep("Step 2/3: Transaction broadcasted! GenLayer Validators fetching authentic commit diff & evaluating consensus...");
       await new Promise((res) => setTimeout(res, 1000));
 
-      setAuditStep("Step 3/3: Demonstrated Public Contract Call — Reading Confirmed On-Chain Verdict & State...");
+      setAuditStep("Step 3/3: Reading Confirmed On-Chain Verdict & Bound Commit State...");
       await new Promise((res) => setTimeout(res, 1000));
 
       // Strictly read updated state directly from public contract view call
@@ -100,12 +108,13 @@ contract VaultEscrow {
       onPatchEvaluated(bounty.id, updatedOnChainBounty);
 
       if (updatedOnChainBounty.status === "RESOLVED") {
-        alert(`✅ ON-CHAIN VALIDATOR CONSENSUS PASSED!\n\nPatch verified by GenLayer AI VM. Reward payout disbursed on-chain. Winner: ${updatedOnChainBounty.winner || account}`);
+        alert(`✅ ON-CHAIN VALIDATOR CONSENSUS PASSED!\n\nPatch verified by GenLayer AI VM directly against authentic git diff. Reward payout disbursed on-chain. Winner: ${updatedOnChainBounty.winner || account}`);
       } else {
-        alert(`❌ ON-CHAIN VALIDATOR CONSENSUS REJECTED!\n\nPatch failed security evaluation on-chain. Bounty remains OPEN for resubmission or refund. Reason: ${updatedOnChainBounty.ai_verdict_reason}`);
+        alert(`❌ ON-CHAIN VALIDATOR CONSENSUS REJECTED!\n\nPatch evaluation failed or failed-closed on malformed criteria. Bounty remains OPEN. Reason: ${updatedOnChainBounty.ai_verdict_reason}`);
       }
 
       onClose();
+      setCommitHash("");
       setPatchCode("");
       setPrUrl("");
     } catch (err: any) {
@@ -196,6 +205,28 @@ contract VaultEscrow {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-semibold text-slate-300">
+                  Bound Git Commit Hash (SHA) *
+                </label>
+                <span className="text-[10px] text-cyan-400 font-mono bg-cyan-950/60 px-1.5 py-0.5 rounded border border-cyan-800/40">
+                  Immutable Anchor
+                </span>
+              </div>
+              <input
+                type="text"
+                required
+                placeholder="e.g. 4a8b1c7d8e9f0123456789abcdef0123456789ab (or 7+ char SHA)"
+                value={commitHash}
+                onChange={(e) => setCommitHash(e.target.value)}
+                className="w-full px-3.5 py-2.5 bg-slate-900 border border-border rounded-xl text-sm text-white focus:outline-none focus:border-cyan-500 font-mono text-xs"
+              />
+              <p className="text-[10px] text-slate-400 mt-1">
+                GenLayer validators fetch the authentic commit diff via <code className="text-indigo-300">gl.nondet.web.get</code> to ground the consensus verdict in real code.
+              </p>
+            </div>
+
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
                 GitHub Pull Request URL *

@@ -18,6 +18,7 @@ export interface Bounty {
   winner: string;
   ai_verdict_reason: string;
   patch_pr_url: string;
+  commit_hash?: string;
   created_at?: string;
   submission_count?: string;
 }
@@ -277,8 +278,9 @@ export async function createBountyOnChain(
  */
 export async function submitAndEvaluatePatchOnChain(
   bountyId: string,
-  patchCode: string,
+  commitHash: string,
   prUrl: string,
+  patchCode: string,
   account: string
 ): Promise<{ txHash: string; updatedBounty: Bounty }> {
   if (typeof window === "undefined" || !window.ethereum) {
@@ -287,7 +289,7 @@ export async function submitAndEvaluatePatchOnChain(
 
   const payload = {
     method: "submit_and_evaluate_patch",
-    args: [bountyId, patchCode, prUrl],
+    args: [bountyId, commitHash, prUrl, patchCode],
   };
   const dataHex = "0x" + Buffer.from(JSON.stringify(payload)).toString("hex");
 

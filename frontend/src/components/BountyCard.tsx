@@ -179,6 +179,14 @@ export const BountyCard: React.FC<BountyCardProps> = ({
                     Winner Hunter Address: {bounty.winner}
                   </div>
                 )}
+                {bounty.commit_hash && (
+                  <div className="pt-1 flex items-center gap-2">
+                    <span className="text-[11px] text-slate-400 font-mono">Bound Commit:</span>
+                    <span className="text-[11px] font-mono text-cyan-300 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/40">
+                      {bounty.commit_hash.slice(0, 10)}
+                    </span>
+                  </div>
+                )}
                 {bounty.patch_pr_url && (
                   <div className="pt-1">
                     <a
