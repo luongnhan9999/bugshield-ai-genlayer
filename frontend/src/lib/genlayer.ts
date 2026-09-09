@@ -122,35 +122,64 @@ export function decodeRpcString(hexResult: string): string {
  * Executes a read-only View contract call using standard eth_call via RPC
  */
 export async function ethCallViewOnChain(functionName: string, args: any[]): Promise<string> {
-  const rpcUrl = process.env.NEXT_PUBLIC_GENLAYER_RPC || "https://testnet-rpc.genlayer.com";
   const encodedData = getEncodedViewData(functionName, args);
 
-  const res = await fetch(rpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      method: "eth_call",
-      params: [
-        {
-          to: CONTRACT_ADDRESS,
-          data: encodedData,
-        },
-        "latest",
-      ],
-      id: Date.now(),
-    }),
-  });
-
-  const data = await res.json();
-  if (data.error) {
-    throw new Error(`RPC view call failed for ${functionName}: ${data.error.message || JSON.stringify(data.error)}`);
-  }
-  if (!data.result) {
-    throw new Error(`RPC view call returned empty result for function ${functionName}`);
+  // 1. Prioritize MetaMask active provider (avoids CORS, 403, and network mismatches)
+  if (typeof window !== "undefined" && window.ethereum) {
+    try {
+      const hexResult = (await window.ethereum.request({
+        method: "eth_call",
+        params: [
+          {
+            to: CONTRACT_ADDRESS,
+            data: encodedData,
+          },
+          "latest",
+        ],
+      })) as string;
+      if (hexResult && hexResult !== "0x") {
+        return decodeRpcString(hexResult);
+      }
+    } catch (err) {
+      console.warn(`window.ethereum eth_call failed for ${functionName}, trying fallback:`, err);
+    }
   }
 
-  return decodeRpcString(data.result);
+  // 2. Direct fetch fallback with multiple RPC endpoints
+  const endpoints = [
+    process.env.NEXT_PUBLIC_GENLAYER_RPC,
+    "https://studio.genlayer.com/api",
+    "https://testnet-rpc.genlayer.com",
+  ].filter(Boolean) as string[];
+
+  for (const rpcUrl of endpoints) {
+    try {
+      const res = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "eth_call",
+          params: [
+            {
+              to: CONTRACT_ADDRESS,
+              data: encodedData,
+            },
+            "latest",
+          ],
+          id: Date.now(),
+        }),
+      });
+      const data = await res.json();
+      if (data && data.result && data.result !== "0x") {
+        return decodeRpcString(data.result);
+      }
+    } catch (e) {
+      // try next
+    }
+  }
+
+  throw new Error(`RPC view call failed for ${functionName} across all endpoints.`);
 }
 
 /**
@@ -158,33 +187,61 @@ export async function ethCallViewOnChain(functionName: string, args: any[]): Pro
  * Fails explicitly if transaction receipt is missing or execution reverted.
  */
 export async function waitForTxFinality(txHash: string): Promise<any> {
-  const rpcUrl = process.env.NEXT_PUBLIC_GENLAYER_RPC || "https://testnet-rpc.genlayer.com";
   const startTime = Date.now();
+  const endpoints = [
+    process.env.NEXT_PUBLIC_GENLAYER_RPC,
+    "https://studio.genlayer.com/api",
+    "https://testnet-rpc.genlayer.com",
+  ].filter(Boolean) as string[];
   
   while (Date.now() - startTime < 120000) {
-    try {
-      const res = await fetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
+    // 1. Try MetaMask provider directly first (always on the active chain)
+    if (typeof window !== "undefined" && window.ethereum) {
+      try {
+        const receipt = await window.ethereum.request({
           method: "eth_getTransactionReceipt",
           params: [txHash],
-          id: Date.now(),
-        }),
-      });
-      const data = await res.json();
-      if (data.result) {
-        if (data.result.status === "0x0" || data.result.status === 0) {
-          throw new Error(`Transaction execution reverted on-chain (Tx: ${txHash})`);
+        });
+        if (receipt) {
+          if (receipt.status === "0x0" || receipt.status === 0) {
+            throw new Error(`Transaction execution reverted on-chain (Tx: ${txHash})`);
+          }
+          return receipt;
         }
-        return data.result;
-      }
-    } catch (e: any) {
-      if (e.message && e.message.includes("reverted")) {
-        throw e;
+      } catch (e: any) {
+        if (e.message && e.message.includes("reverted")) {
+          throw e;
+        }
       }
     }
+
+    // 2. Direct fetch fallback
+    for (const rpcUrl of endpoints) {
+      try {
+        const res = await fetch(rpcUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "eth_getTransactionReceipt",
+            params: [txHash],
+            id: Date.now(),
+          }),
+        });
+        const data = await res.json();
+        if (data && data.result) {
+          if (data.result.status === "0x0" || data.result.status === 0) {
+            throw new Error(`Transaction execution reverted on-chain (Tx: ${txHash})`);
+          }
+          return data.result;
+        }
+      } catch (e: any) {
+        if (e.message && e.message.includes("reverted")) {
+          throw e;
+        }
+      }
+    }
+
     await new Promise((r) => setTimeout(r, 2000));
   }
   throw new Error(`Transaction finality receipt timed out on-chain (Tx: ${txHash})`);
@@ -212,6 +269,7 @@ export async function getBountyFromRPC(bountyId: string): Promise<Bounty> {
     winner: String(raw.winner || ""),
     ai_verdict_reason: String(raw.ai_verdict_reason || ""),
     patch_pr_url: String(raw.patch_pr_url || ""),
+    commit_hash: String(raw.commit_hash || ""),
     created_at: String(raw.created_at || "0"),
     submission_count: String(raw.submission_count || "0"),
   };
@@ -228,7 +286,8 @@ export async function createBountyOnChain(
   vulnerabilityDescription: string,
   expectedFixCriteria: string,
   rewardAmountGen: string,
-  account: string
+  account: string,
+  onStatusChange?: (status: string) => void
 ): Promise<{ txHash: string; bounty: Bounty }> {
   if (typeof window === "undefined" || !window.ethereum) {
     throw new Error("No Web3 wallet provider available");
@@ -246,6 +305,8 @@ export async function createBountyOnChain(
   };
   const dataHex = "0x" + Buffer.from(JSON.stringify(payload)).toString("hex");
 
+  onStatusChange?.("Step 1/3: Prompting MetaMask for real on-chain transaction approval...");
+
   const txHash = (await window.ethereum.request({
     method: "eth_sendTransaction",
     params: [
@@ -262,8 +323,12 @@ export async function createBountyOnChain(
     throw new Error("On-chain transaction creation request was rejected or failed to broadcast.");
   }
 
+  onStatusChange?.(`Step 2/3: Transaction broadcasted (${txHash.slice(0, 10)}...)! Waiting for finality receipt...`);
+
   // 1. Wait for transaction finality on-chain (fails on missing/reverted receipt)
   await waitForTxFinality(txHash);
+
+  onStatusChange?.("Step 3/3: Transaction confirmed! Reading on-chain contract state...");
 
   // 2. Read actual state from contract via public contract view call (fails if read fails)
   const fetchedBounty = await getBountyFromRPC(bountyId);
@@ -280,7 +345,8 @@ export async function submitAndEvaluatePatchOnChain(
   bountyId: string,
   commitHash: string,
   prUrl: string,
-  account: string
+  account: string,
+  onStatusChange?: (status: string) => void
 ): Promise<{ txHash: string; updatedBounty: Bounty }> {
   if (typeof window === "undefined" || !window.ethereum) {
     throw new Error("No Web3 wallet provider available");
@@ -291,6 +357,8 @@ export async function submitAndEvaluatePatchOnChain(
     args: [bountyId, commitHash, prUrl],
   };
   const dataHex = "0x" + Buffer.from(JSON.stringify(payload)).toString("hex");
+
+  onStatusChange?.("Step 1/3: Prompting MetaMask for On-Chain Patch Transaction Approval...");
 
   const txHash = (await window.ethereum.request({
     method: "eth_sendTransaction",
@@ -308,8 +376,12 @@ export async function submitAndEvaluatePatchOnChain(
     throw new Error("On-chain transaction patch submission request was rejected or failed to broadcast.");
   }
 
+  onStatusChange?.(`Step 2/3: Transaction broadcasted (${txHash.slice(0, 10)}...)! GenLayer Validators fetching authentic commit diff & evaluating consensus...`);
+
   // 1. Wait for transaction finality on-chain (fails on missing/reverted receipt)
   await waitForTxFinality(txHash);
+
+  onStatusChange?.("Step 3/3: Consensus evaluated! Reading confirmed on-chain verdict & state...");
 
   // 2. Read actual contract verdict and resulting state directly from public contract view call
   const updatedBounty = await getBountyFromRPC(bountyId);

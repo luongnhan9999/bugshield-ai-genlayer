@@ -56,21 +56,15 @@ export const CreateBountyModal: React.FC<CreateBountyModalProps> = ({
     setTxNotice(null);
 
     try {
-      setTxNotice("Step 1/3: Prompting MetaMask for real on-chain transaction approval...");
       const result = await createBountyOnChain(
         title,
         targetRepoUrl,
         vulnerabilityDescription,
         expectedFixCriteria,
         rewardAmount,
-        account
+        account,
+        (status) => setTxNotice(status)
       );
-
-      setTxNotice("Step 2/3: On-chain transaction broadcasted! Waiting for finality receipt...");
-      await new Promise((res) => setTimeout(res, 1000));
-
-      setTxNotice("Step 3/3: Demonstrated Public Contract Call — Reading Confirmed On-Chain State...");
-      await new Promise((res) => setTimeout(res, 1000));
 
       // Strictly read updated state directly from public contract view call
       onBountyCreated(result.bounty);

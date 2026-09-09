@@ -58,14 +58,13 @@ export const SubmitPatchModal: React.FC<SubmitPatchModalProps> = ({
     setIsAuditing(true);
 
     try {
-      setAuditStep("Step 1/3: Prompting MetaMask for On-Chain Patch Transaction Approval...");
-      const result = await submitAndEvaluatePatchOnChain(bounty.id, commitHash.trim(), prUrl.trim(), account);
-
-      setAuditStep("Step 2/3: Transaction broadcasted! GenLayer Validators fetching authentic commit diff & evaluating consensus...");
-      await new Promise((res) => setTimeout(res, 1000));
-
-      setAuditStep("Step 3/3: Reading Confirmed On-Chain Verdict & Bound Commit State...");
-      await new Promise((res) => setTimeout(res, 1000));
+      const result = await submitAndEvaluatePatchOnChain(
+        bounty.id,
+        commitHash.trim(),
+        prUrl.trim(),
+        account,
+        (status) => setAuditStep(status)
+      );
 
       // Strictly read updated state directly from public contract view call
       const updatedOnChainBounty = result.updatedBounty;
