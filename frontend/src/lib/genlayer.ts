@@ -26,7 +26,7 @@ export interface Bounty {
 export const GENLAYER_TESTNET_CONFIG = {
   chainId: "0xF22F", // 61999 in hex (0xF22F)
   chainName: "GenLayer Testnet",
-  rpcUrls: [process.env.NEXT_PUBLIC_GENLAYER_RPC || "https://testnet-rpc.genlayer.com"],
+  rpcUrls: [process.env.NEXT_PUBLIC_GENLAYER_RPC || "https://studio.genlayer.com/api"],
   nativeCurrency: {
     name: "GenLayer Token",
     symbol: "GEN",

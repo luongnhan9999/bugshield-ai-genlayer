@@ -102,7 +102,7 @@ export const Footer: React.FC = () => {
             <ul className="space-y-2 text-xs">
               <li>
                 <a
-                  href="https://github.com/luongnhan9999/bugshield-ai"
+                  href="https://github.com/luongnhan9999/bugshield-ai-genlayer"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="hover:text-white transition-colors flex items-center"
@@ -177,7 +177,7 @@ export const Footer: React.FC = () => {
             <span>Privacy Policy</span>
             <span>Terms of Audit Service</span>
             <a
-              href="https://testnet-rpc.genlayer.com"
+              href="https://studio.genlayer.com/api"
               target="_blank"
               rel="noopener noreferrer"
               className="text-cyan-400 hover:underline flex items-center"

@@ -118,12 +118,12 @@ export default function Home() {
 
             <div className="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-400">
               <a
-                href="https://testnet-rpc.genlayer.com"
+                href="https://studio.genlayer.com/api"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center hover:text-cyan-400 transition-colors"
               >
-                <Cpu className="w-4 h-4 mr-1 text-cyan-400" /> RPC: https://testnet-rpc.genlayer.com
+                <Cpu className="w-4 h-4 mr-1 text-cyan-400" /> RPC: https://studio.genlayer.com/api
               </a>
               <span>•</span>
               <span>Chain ID: 61999</span>
