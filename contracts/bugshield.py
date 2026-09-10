@@ -1,4 +1,4 @@
-# v0.2.17
+# v0.2.18
 # { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 from genlayer import *
 from dataclasses import dataclass
@@ -26,6 +26,7 @@ class Bounty:
     submission_count: bigint
     commit_hash: str  # Bound immutable git commit SHA
     last_submitter: str  # Bound address of the hunter who submitted the patch
+    payout_status: str  # "UNPAID", "PAID", "CLAIMABLE", "REFUNDED"
 
 
 class Contract(gl.Contract):
@@ -55,43 +56,63 @@ class Contract(gl.Contract):
             raise UserError(f"Failed to parse runtime timestamp: {str(e)}")
 
     def _parse_llm_json(self, response) -> dict:
-        """Robust JSON parser to handle LLM markdown formatting issues"""
+        """
+        STRICT OUTPUT PARSER (Steward Gen. Dave Enforced):
+        - Accepts ONLY valid JSON object with explicit boolean is_valid and non-empty string reason.
+        - Strictly rejects prose, markdown text, pseudo-JSON, truncated JSON, missing fields, nulls, and wrong-type values.
+        - Absolutely NO fallback that approves text lacking 'false'.
+        - Fail-closed on any malformed or unexpected structure.
+        """
         if isinstance(response, dict):
-            return response
-        try:
-            text = str(response).strip()
-            if text.startswith("```json"):
-                text = text[7:]
-            elif text.startswith("```"):
-                text = text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-            text = text.strip()
-            
+            raw_dict = response
+        else:
             try:
-                return json.loads(text)
-            except Exception:
-                pass
+                text = str(response).strip()
+                if text.startswith("```json"):
+                    text = text[7:]
+                elif text.startswith("```"):
+                    text = text[3:]
+                if text.endswith("```"):
+                    text = text[:-3]
+                text = text.strip()
+                raw_dict = json.loads(text)
+            except Exception as e:
+                return {
+                    "is_valid": False,
+                    "reason": f"FAIL-CLOSED: Response is not valid JSON ({str(e)})."
+                }
 
-            try:
-                cleaned = text.replace("'", '"').replace("True", "true").replace("False", "false")
-                return json.loads(cleaned)
-            except Exception:
-                pass
+        if not isinstance(raw_dict, dict):
+            return {
+                "is_valid": False,
+                "reason": "FAIL-CLOSED: Output root must be a JSON object."
+            }
 
-            import re
-            is_valid = True
-            if "false" in text.lower():
-                is_valid = False
-            
-            reason_match = re.search(r'"reason"\s*:\s*"([^"]+)"', text)
-            if not reason_match:
-                reason_match = re.search(r"'reason'\s*:\s*'([^']+)'", text)
-            
-            reason = reason_match.group(1) if reason_match else text[:200]
-            return {"is_valid": is_valid, "reason": reason}
-        except Exception as e:
-            return {"is_valid": False, "reason": "Failed to parse JSON: " + str(e)}
+        if "is_valid" not in raw_dict or "reason" not in raw_dict:
+            return {
+                "is_valid": False,
+                "reason": "FAIL-CLOSED: Missing required fields 'is_valid' or 'reason'."
+            }
+
+        val = raw_dict["is_valid"]
+        reason = raw_dict["reason"]
+
+        if type(val) is not bool:
+            return {
+                "is_valid": False,
+                "reason": "FAIL-CLOSED: Field 'is_valid' must be an explicit boolean (true or false), not string/number/null."
+            }
+
+        if not isinstance(reason, str) or len(reason.strip()) == 0:
+            return {
+                "is_valid": False,
+                "reason": "FAIL-CLOSED: Field 'reason' must be a non-empty string."
+            }
+
+        return {
+            "is_valid": val,
+            "reason": reason.strip()
+        }
 
     @gl.public.write.payable
     def create_bounty(
@@ -133,6 +154,7 @@ class Contract(gl.Contract):
             submission_count=bigint(0),
             commit_hash="",
             last_submitter="",
+            payout_status="UNPAID",
         )
 
     @gl.public.write.payable
@@ -261,7 +283,7 @@ class Contract(gl.Contract):
                 parsed = self._parse_llm_json(text_res)
 
                 # Strict fail-closed structure check
-                if not isinstance(parsed, dict) or "is_valid" not in parsed:
+                if not isinstance(parsed, dict) or "is_valid" not in parsed or type(parsed.get("is_valid")) is not bool:
                     return {"is_valid": False, "reason": "FAIL-CLOSED: Validator consensus output was malformed."}
                 return parsed
             except Exception as e:
@@ -275,16 +297,14 @@ class Contract(gl.Contract):
             if not isinstance(leader_data, dict):
                 leader_data = self._parse_llm_json(str(leader_data))
 
-            if not isinstance(leader_data, dict) or "is_valid" not in leader_data:
+            if not isinstance(leader_data, dict) or type(leader_data.get("is_valid")) is not bool:
                 return False
 
             mine_data = leader_fn()
-            if not isinstance(mine_data, dict) or "is_valid" not in mine_data:
+            if not isinstance(mine_data, dict) or type(mine_data.get("is_valid")) is not bool:
                 return False
 
-            v_leader = bool(leader_data.get("is_valid", False))
-            v_mine = bool(mine_data.get("is_valid", False))
-            return v_leader == v_mine
+            return leader_data["is_valid"] == mine_data["is_valid"]
 
         # Execute GenLayer non-deterministic consensus block
         result = gl.vm.run_nondet(leader_fn, validator_fn)
@@ -297,28 +317,41 @@ class Contract(gl.Contract):
         bounty.commit_hash = clean_commit
         bounty.patch_pr_url = clean_pr
 
-        if not isinstance(result, dict) or "is_valid" not in result or not isinstance(result["is_valid"], bool):
+        # Strict validation of consensus output
+        parsed_result = self._parse_llm_json(result)
+        is_valid = parsed_result.get("is_valid")
+        reason = str(parsed_result.get("reason", "")).strip()
+
+        if is_valid is not True or len(reason) < 5:
+            # Rejection path: Fail-closed, keep escrow safe in contract
             bounty.status = "OPEN"
-            bounty.ai_verdict_reason = f"[Submission #{sub_count}] REJECTED (FAIL-CLOSED): Consensus output was malformed."
+            bounty.payout_status = "UNPAID"
+            bounty.ai_verdict_reason = f"[Submission #{sub_count}] REJECTED (Commit: {clean_commit[:7]}): {reason}"
             self.bounties[bounty_id] = bounty
             return
 
-        is_valid = result["is_valid"]
-        reason = str(result.get("reason", "No detailed reason provided")).strip()
-
-        # ESCROW RELEASE: Only released if is_valid is STRICTLY True and reason is verified
-        if is_valid is True and len(reason) > 5:
-            bounty.status = "RESOLVED"
-            bounty.winner = hunter
-            bounty.ai_verdict_reason = f"[Submission #{sub_count}] PASSED (Commit: {clean_commit[:7]}): {reason}"
-            self.bounties[bounty_id] = bounty
-
-            # Escrow Payout directly to Hunter via emit_transfer
+        # APPROVAL & ATOMIC/RECOVERABLE SETTLEMENT PATH:
+        # Do not label payout successful until transfer confirmation!
+        transfer_success = False
+        transfer_err = ""
+        try:
             gl.get_contract_at(Address(hunter)).emit_transfer(value=u256(bounty.reward_amount))
+            transfer_success = True
+        except Exception as e:
+            transfer_success = False
+            transfer_err = str(e)
+
+        bounty.status = "RESOLVED"
+        bounty.winner = hunter
+
+        if transfer_success:
+            bounty.payout_status = "PAID"
+            bounty.ai_verdict_reason = f"[Submission #{sub_count}] PASSED & PAID (Commit: {clean_commit[:7]}): {reason}"
         else:
-            bounty.status = "OPEN"
-            bounty.ai_verdict_reason = f"[Submission #{sub_count}] REJECTED (Commit: {clean_commit[:7]}): {reason}"
-            self.bounties[bounty_id] = bounty
+            bounty.payout_status = "CLAIMABLE"
+            bounty.ai_verdict_reason = f"[Submission #{sub_count}] PASSED (Commit: {clean_commit[:7]}): {reason}. Automatic transfer unconfirmed ({transfer_err}). Escrow held for recoverable claim via claim_bounty_payout."
+
+        self.bounties[bounty_id] = bounty
 
     @gl.public.write
     def appeal_rejection(
@@ -405,7 +438,7 @@ class Contract(gl.Contract):
                 llm_res = gl.nondet.exec_prompt(prompt, response_format="json")
                 text_res = llm_res.content if hasattr(llm_res, "content") else str(llm_res)
                 parsed = self._parse_llm_json(text_res)
-                if not isinstance(parsed, dict) or "is_valid" not in parsed:
+                if not isinstance(parsed, dict) or "is_valid" not in parsed or type(parsed.get("is_valid")) is not bool:
                     return {"is_valid": False, "reason": "Appeal Denied (Fail-closed: malformed tribunal output)"}
                 return parsed
             except Exception as e:
@@ -417,27 +450,46 @@ class Contract(gl.Contract):
             leader_data = leader_res.calldata if hasattr(leader_res, "calldata") else leader_res
             if not isinstance(leader_data, dict):
                 leader_data = self._parse_llm_json(str(leader_data))
-            if not isinstance(leader_data, dict) or "is_valid" not in leader_data:
+            if not isinstance(leader_data, dict) or type(leader_data.get("is_valid")) is not bool:
                 return False
             mine_data = leader_appeal_fn()
-            if not isinstance(mine_data, dict) or "is_valid" not in mine_data:
+            if not isinstance(mine_data, dict) or type(mine_data.get("is_valid")) is not bool:
                 return False
-            return bool(leader_data.get("is_valid", False)) == bool(mine_data.get("is_valid", False))
+            return leader_data["is_valid"] == mine_data["is_valid"]
 
         result = gl.vm.run_nondet(leader_appeal_fn, validator_appeal_fn)
         if not isinstance(result, dict):
             result = self._parse_llm_json(str(result))
 
-        if isinstance(result, dict) and result.get("is_valid") is True:
-            reason = str(result.get("reason", "Appeal upheld by consensus tribunal")).strip()
+        parsed_result = self._parse_llm_json(result)
+        is_valid = parsed_result.get("is_valid")
+        reason = str(parsed_result.get("reason", "")).strip()
+
+        if is_valid is True and len(reason) > 5:
+            transfer_success = False
+            transfer_err = ""
+            try:
+                gl.get_contract_at(Address(hunter)).emit_transfer(value=u256(bounty.reward_amount))
+                transfer_success = True
+            except Exception as e:
+                transfer_success = False
+                transfer_err = str(e)
+
             bounty.status = "RESOLVED"
             bounty.winner = hunter
-            bounty.ai_verdict_reason = f"[APPEAL UPHELD]: {reason}"
+
+            if transfer_success:
+                bounty.payout_status = "PAID"
+                bounty.ai_verdict_reason = f"[APPEAL UPHELD & PAID]: {reason}"
+            else:
+                bounty.payout_status = "CLAIMABLE"
+                bounty.ai_verdict_reason = f"[APPEAL UPHELD]: {reason}. Transfer unconfirmed ({transfer_err}). Escrow held for recoverable claim via claim_bounty_payout."
+
             self.bounties[bounty_id] = bounty
-            gl.get_contract_at(Address(hunter)).emit_transfer(value=u256(bounty.reward_amount))
         else:
-            reason = str(result.get("reason", "Appeal denied by consensus tribunal")).strip() if isinstance(result, dict) else "Appeal denied"
-            bounty.ai_verdict_reason = f"[APPEAL DENIED]: {reason}"
+            bounty.status = "OPEN"
+            bounty.payout_status = "UNPAID"
+            bounty.ai_verdict_reason = f"[APPEAL DENIED]: {reason or 'Appeal denied by consensus tribunal'}"
             self.bounties[bounty_id] = bounty
 
     @gl.public.write
@@ -468,11 +520,60 @@ class Contract(gl.Contract):
             raise UserError("Anti-Rugpull Lock: This bounty has active submission records. Creator cannot cancel or withdraw escrow while security hunters have submitted patches.")
 
         bounty.status = "CANCELLED"
-        bounty.ai_verdict_reason = "Cancelled by creator after timelock expired with no active submissions. Escrow fully refunded."
+        transfer_success = False
+        transfer_err = ""
+        try:
+            gl.get_contract_at(Address(bounty.creator)).emit_transfer(value=u256(bounty.reward_amount))
+            transfer_success = True
+        except Exception as e:
+            transfer_success = False
+            transfer_err = str(e)
+
+        if transfer_success:
+            bounty.payout_status = "REFUNDED"
+            bounty.ai_verdict_reason = "Cancelled by creator after timelock expired with no active submissions. Escrow fully refunded."
+        else:
+            bounty.payout_status = "CLAIMABLE"
+            bounty.ai_verdict_reason = f"Cancelled by creator. Automatic refund unconfirmed ({transfer_err}). Escrow held for recoverable claim via claim_bounty_payout."
+
         self.bounties[bounty_id] = bounty
 
-        # Escrow Refund to Creator via emit_transfer
-        gl.get_contract_at(Address(bounty.creator)).emit_transfer(value=u256(bounty.reward_amount))
+    @gl.public.write
+    def claim_bounty_payout(self, bounty_id: str) -> None:
+        """
+        RECOVERABLE SETTLEMENT CLAIM METHOD:
+        Allows the verified winner (hunter) or creator (for cancelled bounty)
+        to pull pending escrow if automatic push transfer failed or was held.
+        Guarantees that escrow funds are never locked or unrecoverable.
+        """
+        if bounty_id not in self.bounties:
+            raise UserError("Bounty not found")
+        bounty = self.bounties[bounty_id]
+
+        if bounty.payout_status in ["PAID", "REFUNDED"]:
+            raise UserError("Bounty escrow has already been successfully transferred.")
+
+        caller = str(gl.message.sender_address).lower()
+
+        if bounty.status == "RESOLVED":
+            if caller != bounty.winner.lower():
+                raise UserError("Only the verified winner can claim this resolved bounty payout.")
+            
+            gl.get_contract_at(Address(bounty.winner)).emit_transfer(value=u256(bounty.reward_amount))
+            bounty.payout_status = "PAID"
+            bounty.ai_verdict_reason += " [Escrow payout claimed successfully via claim_bounty_payout]"
+            self.bounties[bounty_id] = bounty
+
+        elif bounty.status == "CANCELLED":
+            if caller != bounty.creator.lower():
+                raise UserError("Only the creator can claim a cancelled bounty refund.")
+            
+            gl.get_contract_at(Address(bounty.creator)).emit_transfer(value=u256(bounty.reward_amount))
+            bounty.payout_status = "REFUNDED"
+            bounty.ai_verdict_reason += " [Escrow refund claimed successfully via claim_bounty_payout]"
+            self.bounties[bounty_id] = bounty
+        else:
+            raise UserError("Bounty is not in a claimable state (must be RESOLVED or CANCELLED with unclaimed escrow).")
 
     @gl.public.view
     def get_bounty(self, bounty_id: str) -> str:
@@ -496,6 +597,7 @@ class Contract(gl.Contract):
             "last_submitter": getattr(b, "last_submitter", ""),
             "created_at": str(b.created_at),
             "submission_count": str(b.submission_count),
+            "payout_status": getattr(b, "payout_status", "UNPAID"),
         })
 
     @gl.public.view
@@ -522,5 +624,6 @@ class Contract(gl.Contract):
                     "last_submitter": getattr(b, "last_submitter", ""),
                     "created_at": str(b.created_at),
                     "submission_count": str(b.submission_count),
+                    "payout_status": getattr(b, "payout_status", "UNPAID"),
                 })
         return json.dumps(all_items)

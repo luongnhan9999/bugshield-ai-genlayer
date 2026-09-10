@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Bounty, cancelBountyOnChain, formatRewardAmount } from "../lib/genlayer";
+import { Bounty, cancelBountyOnChain, claimBountyPayoutOnChain, formatRewardAmount } from "../lib/genlayer";
 import {
   ShieldAlert,
   CheckCircle2,
@@ -36,10 +36,35 @@ export const BountyCard: React.FC<BountyCardProps> = ({
     bounty.status === "RESOLVED" || Boolean(bounty.ai_verdict_reason)
   );
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isClaiming, setIsClaiming] = useState(false);
 
   const isCreator =
     Boolean(currentAccount) &&
     currentAccount?.toLowerCase() === bounty.creator.toLowerCase();
+
+  const canClaim =
+    bounty.payout_status === "CLAIMABLE" &&
+    ((bounty.status === "RESOLVED" && currentAccount?.toLowerCase() === bounty.winner.toLowerCase()) ||
+      (bounty.status === "CANCELLED" && isCreator));
+
+  const handleClaimPayout = async () => {
+    if (!currentAccount || typeof window === "undefined" || !window.ethereum) {
+      alert("Web3 Wallet Connection Required: Please connect your wallet to claim escrow payout.");
+      return;
+    }
+    setIsClaiming(true);
+    try {
+      const res = await claimBountyPayoutOnChain(bounty.id, currentAccount);
+      alert(`✅ Escrow Payout Claimed Successfully!\n\nTx Hash: ${res.txHash}`);
+      if (onBountyCancelled) {
+        onBountyCancelled(bounty.id, res.updatedBounty);
+      }
+    } catch (err: any) {
+      alert(`❌ Claim Failed:\n\n${err.message || err}`);
+    } finally {
+      setIsClaiming(false);
+    }
+  };
 
   const handleCancelBounty = async () => {
     if (!currentAccount || typeof window === "undefined" || !window.ethereum) {
@@ -69,6 +94,14 @@ export const BountyCard: React.FC<BountyCardProps> = ({
   const getStatusBadge = () => {
     switch (bounty.status) {
       case "RESOLVED":
+        if (bounty.payout_status === "CLAIMABLE") {
+          return (
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              <CheckCircle2 className="w-3.5 h-3.5 mr-1 text-amber-400" />
+              RESOLVED (CLAIMABLE)
+            </span>
+          );
+        }
         return (
           <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
             <CheckCircle2 className="w-3.5 h-3.5 mr-1 text-emerald-400" />
@@ -76,6 +109,14 @@ export const BountyCard: React.FC<BountyCardProps> = ({
           </span>
         );
       case "CANCELLED":
+        if (bounty.payout_status === "CLAIMABLE") {
+          return (
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              <XCircle className="w-3.5 h-3.5 mr-1 text-amber-400" />
+              CANCELLED (CLAIMABLE)
+            </span>
+          );
+        }
         return (
           <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-slate-500/10 text-slate-400 border border-slate-500/20">
             <XCircle className="w-3.5 h-3.5 mr-1 text-slate-400" />
@@ -233,10 +274,22 @@ export const BountyCard: React.FC<BountyCardProps> = ({
             </button>
           </div>
         ) : (
-          <span className="inline-flex items-center text-xs text-slate-500 font-medium">
-            <Lock className="w-3.5 h-3.5 mr-1 text-slate-500" />
-            Bounty Closed ({bounty.status})
-          </span>
+          <div className="flex items-center space-x-2">
+            {canClaim && (
+              <button
+                onClick={handleClaimPayout}
+                disabled={isClaiming}
+                className="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 transition-all shadow-md shadow-amber-500/20"
+              >
+                <Award className="w-3.5 h-3.5 mr-1 text-slate-950" />
+                {isClaiming ? "Claiming..." : "Claim Escrow"}
+              </button>
+            )}
+            <span className="inline-flex items-center text-xs text-slate-500 font-medium">
+              <Lock className="w-3.5 h-3.5 mr-1 text-slate-500" />
+              Bounty Closed ({bounty.status})
+            </span>
+          </div>
         )}
       </div>
     </div>
