@@ -17,11 +17,12 @@ def contract():
     c = Contract()
     c.bounties = {}
     c.bounty_ids = []
+    c.confirmed_transfers = {}
     c.balance = 1000000000000000000  # 1 GEN
     return c
 
 class TestLLMParserAndFailClosed:
-    """Tests LLM JSON parsing robustness and fail-closed principles."""
+    """Tests LLM JSON parsing robustness and fail-closed principles without normalization."""
 
     def test_parse_clean_json(self, contract):
         raw = '{"is_valid": true, "reason": "Verified clean fix without regressions."}'
@@ -30,11 +31,29 @@ class TestLLMParserAndFailClosed:
         assert result["is_valid"] is True
         assert "regressions" in result["reason"]
 
-    def test_parse_markdown_wrapped_json(self, contract):
-        raw = '```json\n{"is_valid": false, "reason": "Fix criteria not satisfied."}\n```'
+    def test_reject_markdown_wrapped_json_without_normalization(self, contract):
+        # Pavel Kolosov Mandate: reject all non-JSON output without normalization
+        raw = '```json\n{"is_valid": true, "reason": "Fix criteria satisfied."}\n```'
         result = contract._parse_llm_json(raw)
         assert isinstance(result, dict)
         assert result["is_valid"] is False
+        assert "FAIL-CLOSED" in result["reason"]
+
+    def test_reject_smart_quotes_without_normalization(self, contract):
+        # Smart quotes are not valid JSON characters
+        raw = '{"is_valid": true, “reason”: “Quoted with smart unicode characters”}'
+        result = contract._parse_llm_json(raw)
+        assert isinstance(result, dict)
+        assert result["is_valid"] is False
+        assert "FAIL-CLOSED" in result["reason"]
+
+    def test_reject_single_quotes_and_python_booleans(self, contract):
+        # Python literal is not canonical JSON
+        raw = "{'is_valid': True, 'reason': 'Valid criteria'}"
+        result = contract._parse_llm_json(raw)
+        assert isinstance(result, dict)
+        assert result["is_valid"] is False
+        assert "FAIL-CLOSED" in result["reason"]
 
     def test_parse_malformed_json_fallback(self, contract):
         raw = 'Random conversational text without valid JSON structure'
@@ -43,17 +62,10 @@ class TestLLMParserAndFailClosed:
         assert result.get("is_valid") is False
         assert "FAIL-CLOSED" in result.get("reason", "")
 
-    def test_parse_smart_quotes(self, contract):
-        raw = '{"is_valid": true, “reason”: “Quoted with smart unicode characters”}'
-        result = contract._parse_llm_json(raw)
-        assert isinstance(result, dict)
-        assert result["is_valid"] is True
-
     def test_reject_non_boolean_is_valid(self, contract):
         raw = '{"is_valid": "true", "reason": "String instead of boolean"}'
         result = contract._parse_llm_json(raw)
         assert isinstance(result, dict)
-        # Parser or validator rejects string boolean as non-canonical
         assert result.get("is_valid") is not True or type(result.get("is_valid")) is not bool
 
 class TestRepositoryBinding:
@@ -321,8 +333,12 @@ class TestSettlementAndRecoveryPath:
         assert len(transfers) == 1
         assert transfers[0]["to"] == "0xhunter"
         assert transfers[0]["value"] == 100
-        # CRITICAL: Payout status MUST remain CLAIMABLE until confirmed via confirm_payout!
-        assert contract.bounties["b1"].payout_status == "CLAIMABLE"
+        # CRITICAL: Transitions to PAYOUT_PENDING to lock repeat claims until finalized!
+        assert contract.bounties["b1"].payout_status == "PAYOUT_PENDING"
+
+        # Pavel Kolosov Mandate: Prevent repeat claims while pending
+        with pytest.raises(UserError, match="already pending resolution"):
+            contract.claim_bounty_payout("b1")
 
         # Restore
         contracts.bugshield._Recipient = original_recipient
@@ -345,12 +361,71 @@ class TestSettlementAndRecoveryPath:
             submission_count=bigint(1),
             commit_hash="abcdef123",
             last_submitter="0xhunter",
-            payout_status="CLAIMABLE",
+            payout_status="PAYOUT_PENDING",
             last_payout_tx="",
         )
 
         with pytest.raises(UserError, match="Invalid transfer_tx_hash"):
             contract.confirm_payout("b1", "invalid_short_hash")
+
+    def test_confirm_payout_anti_replay(self, contract):
+        """Pavel Kolosov Mandate: Prevent reuse/replay of confirmed transfer hashes across bounties."""
+        tx_hash = "0x" + "a" * 64
+        contract.confirmed_transfers[tx_hash] = "bounty_original"
+
+        contract.bounties["b2"] = Bounty(
+            id="b2",
+            creator="0xcreator",
+            title="Second Bounty",
+            target_repo_url="https://github.com/org/target-repo",
+            vulnerability_description="Desc",
+            expected_fix_criteria="Fix",
+            reward_amount=bigint(100),
+            status="RESOLVED",
+            winner="0xhunter",
+            ai_verdict_reason="Passed evaluation",
+            patch_pr_url="",
+            created_at=bigint(1789387200),
+            submission_count=bigint(1),
+            commit_hash="abcdef123",
+            last_submitter="0xhunter",
+            payout_status="PAYOUT_PENDING",
+            last_payout_tx="",
+        )
+
+        with pytest.raises(UserError, match="has already been confirmed"):
+            contract.confirm_payout("b2", tx_hash)
+
+    def test_resolve_failed_payout_guards(self, contract):
+        """Guards for resolving failed payouts."""
+        contract.bounties["b1"] = Bounty(
+            id="b1",
+            creator="0xcreator",
+            title="Reentrancy Fix",
+            target_repo_url="https://github.com/org/target-repo",
+            vulnerability_description="Desc",
+            expected_fix_criteria="Fix",
+            reward_amount=bigint(100),
+            status="RESOLVED",
+            winner="0xhunter",
+            ai_verdict_reason="Passed evaluation",
+            patch_pr_url="",
+            created_at=bigint(1789387200),
+            submission_count=bigint(1),
+            commit_hash="abcdef123",
+            last_submitter="0xhunter",
+            payout_status="CLAIMABLE",  # Not PAYOUT_PENDING!
+            last_payout_tx="",
+        )
+
+        # Must be in PAYOUT_PENDING to resolve a failure
+        with pytest.raises(UserError, match="not in PAYOUT_PENDING status"):
+            contract.resolve_failed_payout("b1", "0x" + "b" * 64)
+
+        # Hash must be valid 32-byte hex
+        contract.bounties["b1"].payout_status = "PAYOUT_PENDING"
+        with pytest.raises(UserError, match="Invalid failed_transfer_tx_hash"):
+            contract.resolve_failed_payout("b1", "invalid_short_hash")
 
     def test_prevent_double_claim_after_paid(self, contract):
         gl.message.sender_address = Address("0xhunter")
@@ -417,8 +492,12 @@ class TestSettlementAndRecoveryPath:
         assert len(transfers) == 1
         assert transfers[0]["to"] == "0xcreator"
         assert transfers[0]["value"] == 100
-        # Remains CLAIMABLE until confirmed via confirm_payout
-        assert contract.bounties["b1"].payout_status == "CLAIMABLE"
+        # Transitions to PAYOUT_PENDING until confirmed
+        assert contract.bounties["b1"].payout_status == "PAYOUT_PENDING"
+
+        # Prevent repeat refund claims
+        with pytest.raises(UserError, match="already pending resolution"):
+            contract.claim_bounty_payout("b1")
 
         contracts.bugshield._Recipient = original_recipient
 

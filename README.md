@@ -7,39 +7,40 @@
 ## 🌐 Live Verified Deployments
 
 - **Live Production App:** [https://bugshield-ai-genlayer.vercel.app](https://bugshield-ai-genlayer.vercel.app)
-- **Verified Contract Address (Studionet):** [`0x4C60fDe7d07c2e7F31ca6056ad273997f5784C32`](https://explorer-studio.genlayer.com/address/0x4C60fDe7d07c2e7F31ca6056ad273997f5784C32)
-- **GenLayer Studio Explorer:** [https://explorer-studio.genlayer.com/address/0x4C60fDe7d07c2e7F31ca6056ad273997f5784C32](https://explorer-studio.genlayer.com/address/0x4C60fDe7d07c2e7F31ca6056ad273997f5784C32)
+- **Verified Contract Address (Studionet):** [`0x498010a312055f830f30c3F0c75f0cA8Ab6aE5B2`](https://explorer-studio.genlayer.com/address/0x498010a312055f830f30c3F0c75f0cA8Ab6aE5B2)
+- **GenLayer Studio Explorer:** [https://explorer-studio.genlayer.com/address/0x498010a312055f830f30c3F0c75f0cA8Ab6aE5B2](https://explorer-studio.genlayer.com/address/0x498010a312055f830f30c3F0c75f0cA8Ab6aE5B2)
 - **GitHub Repository:** [https://github.com/luongnhan9999/bugshield-ai-genlayer](https://github.com/luongnhan9999/bugshield-ai-genlayer)
 
 ---
 
 ## 🔍 Verified On-Chain Settlement Evidence (Steward Proof)
 
-All evidence transactions were executed live on GenLayer Studionet on contract [`0x4C60fDe7d07c2e7F31ca6056ad273997f5784C32`](https://explorer-studio.genlayer.com/address/0x4C60fDe7d07c2e7F31ca6056ad273997f5784C32):
+All evidence transactions were executed live on GenLayer Studionet on contract [`0x498010a312055f830f30c3F0c75f0cA8Ab6aE5B2`](https://explorer-studio.genlayer.com/address/0x498010a312055f830f30c3F0c75f0cA8Ab6aE5B2):
 
-| Scenario | Bounty ID | Creation Tx | Evaluation Tx | Claim / Transfer Tx | Confirmation Tx | On-Chain Result |
+| Scenario | Bounty ID | Creation Tx | Evaluation Tx | Claim / Transfer Tx | Repeat Claim Prevention Tx | On-Chain Result |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1. Fail-Closed Rejection** | `bounty-failclosed-1789309697` | [`0x1a52e8...`](https://explorer-studio.genlayer.com/tx/0x1a52e86d2be6278eed5d78dcabd289b462598745a73bdbbcb0f4d0ad6764ffab) | [`0x6996b2...`](https://explorer-studio.genlayer.com/tx/0x6996b234d059bbb23cc46ef03bd340d0eafce6435d8b2daed2c79b7b86af1fbf) | N/A | N/A | **`status: OPEN`**, **`payout_status: UNPAID`**. Multi-validator LLM consensus rejected irrelevant patch `18a13a2`. Escrow safely preserved. |
-| **2. Criteria Enforcement** | `bounty-valid-1789309733` | [`0xa9f915...`](https://explorer-studio.genlayer.com/tx/0xa9f915e32a4a8474636c0ff7e9008fe4f184176009d315ded96ca73ad6580408) | [`0x914be6...`](https://explorer-studio.genlayer.com/tx/0x914be6e58698e041e98d0d9eb8923739ed16be7fa74163d0fbf53b6d1f244d72) | N/A | N/A | **`status: OPEN`**, **`payout_status: UNPAID`**. Consensus inspected git diff and rejected patch failing criteria. Escrow preserved. |
-| **3. Held Payout ➔ Pull Claim ➔ Settlement Confirmation** | `bounty-claimable-1789309775` | [`0x67fdc0...`](https://explorer-studio.genlayer.com/tx/0x67fdc05dafaa82f3149cd9bcc3a5cfe55c1ea3b664f7f45f18741f3796070aa5) | [`0x035ad9...`](https://explorer-studio.genlayer.com/tx/0x035ad94ab60d3f74a414659cd78ec711efb00030238e152ee5681d415106631d) | [`0xf24fbe...`](https://explorer-studio.genlayer.com/tx/0xf24fbebf4ae2f6acbcf578dcf75c72872dfe7555e3d2b9821cf3cf4a15e5eafa)<br>➔ Transfer [`0x9d15f3...`](https://explorer-studio.genlayer.com/tx/0x9d15f3a3ca82a97223f564574f324615a80ad4e6d9dab337292b386e935a4f52) | [`0xf7d3f3...`](https://explorer-studio.genlayer.com/tx/0xf7d3f38370be0ecbfc234e90dca1aacf2cc2d41563764073f5add066c4fa12bd) | **`CLAIMABLE` ➔ Pull Claim ➔ `PAID`**. Evaluated patch held as `CLAIMABLE`. Winner called `claim_bounty_payout` emitting transfer `0x9d15f3...` (`FINALIZED`, `value_credited: true`, 0 errors). `confirm_payout` verified on-chain and transitioned to **`PAID`**! |
+| **1. Fail-Closed Rejection** | `bounty-failclosed-1789323001` | [`0x1c3f2d...`](https://explorer-studio.genlayer.com/tx/0x1c3f2dc35cfeedd04a3622ffd7425db00e7229cdd73a628dc11873323d5b2d1b) | [`0xd4bd1a...`](https://explorer-studio.genlayer.com/tx/0xd4bd1a0bef518305bbeafa2f8578db164272fa21ee52f98b24df915160b89cc7) | N/A | N/A | **`status: OPEN`**, **`payout_status: UNPAID`**. Multi-validator LLM consensus rejected irrelevant patch `18a13a2`. Escrow safely preserved. |
+| **2. Held Payout Evaluation** | `bounty-pull-1789323105` | [`0x571fec...`](https://explorer-studio.genlayer.com/tx/0x571fec4d40799ebff73ac2f43d890662d5e528d345f38d1638a4f930e0491ff5) | [`0x3adfbdd...`](https://explorer-studio.genlayer.com/tx/0x3adfbdd5be299bdf71b36666bdfa911b9d8ce5ea95d1e182ae76a7db52a36440) | N/A | N/A | **`status: RESOLVED`**, **`payout_status: CLAIMABLE`**. Valid commit `42711b3` approved by consensus; escrow safely held as `CLAIMABLE`. |
+| **3. Pull Claim ➔ Repeat Claim Lock** | `bounty-pull-1789323105` | (above) | (above) | [`0xc86262...`](https://explorer-studio.genlayer.com/tx/0xc86262152b4150d8b7b87b3e97d0b2ba796693b5eea1cc5c5534536cfd90f0a9)<br>➔ Child Transfer [`0xecfae2...`](https://explorer-studio.genlayer.com/tx/0xecfae2f5e277105bad07ca5cba89de73640bc3674b34d677cf0034b7bc584c43) | [`0x493914...`](https://explorer-studio.genlayer.com/tx/0x493914a4d9031809e336199e5772d0be84ad517deecca3632e7ca0ea6cba8fa8) | **LOCKED**. Winner called `claim_bounty_payout`, status locked to **`PAYOUT_PENDING`**, emitted native transfer `0xecfae2...` (`FINALIZED`, `value_credited: true`). Duplicate claim attempt reverted on-chain with `UserError("A payout attempt is already pending resolution")`! |
 
 ---
 
-## 🛡️ Key Security & Architecture Highlights (v0.2.22)
+## 🛡️ Key Security & Architecture Highlights (v0.2.23)
 
-### 1. Strict Output Parsing (Zero Lax Fallbacks)
-- **Parser Architecture:** `_parse_llm_json` accepts dictionaries directly from GenVM and normalizes JSON strings while enforcing `type(is_valid) is bool` (strictly `True` or `False`) and non-empty string `reason`.
-- **Zero-Tolerance Parsing:** Prose, markdown, missing fields, nulls, string booleans (`"true"`), and integer booleans (`1`) are strictly rejected.
-- **Fail-Closed Guarantee:** Absolutely NO fallback that approves text lacking "false" exists across any evaluation or appeal paths.
+### 1. Strict Output Parsing (Zero Normalization & Fail-Closed)
+- **Zero-Normalization JSON Parser:** Direct `json.loads` parsing only. Rejects markdown fences (````json`), smart quotes, single quotes, and Python booleans without normalization.
+- **Fail-Closed Guarantee:** Explicit boolean `is_valid` (true/false) and non-empty string `reason` required. Rejects string booleans (`"true"`), integers (`1`), nulls, or truncated objects.
 
-### 2. Safe Recoverable Settlement (Pull-Over-Push & Pre-Flight Balance Verification)
-- **Pre-Flight Liquid Check:** Contract verifies `self.balance >= bounty.reward_amount` before attempting any transfer.
+### 2. Payout Lifecycle, Duplicate Claim Prevention & Linkage Verification
 - **Escrow Lifecycle States (`payout_status`):**
   - `"UNPAID"`: Default state for open bounties.
-  - `"PAID"`: Confirmed outgoing native transfer via `emit_transfer`.
-  - `"CLAIMABLE"`: Escrow safely held in custody if automatic transfer is withheld or held by policy.
-  - `"REFUNDED"`: Escrow refunded to creator after time-lock expiration with no active submissions.
-- **Authorized Pull Claim:** `@gl.public.write def claim_bounty_payout(self, bounty_id)` allows verified winners to safely pull held escrow funds at any time.
+  - `"CLAIMABLE"`: Escrow safely held in contract custody.
+  - `"PAYOUT_PENDING"`: Native outbound transfer emitted; locked against duplicate claims.
+  - `"PAID"`: Outbound transfer verified via on-chain parent-child linkage.
+  - `"REFUNDED"`: Creator refund verified on-chain.
+- **Duplicate Claim Lock:** Emitting transfer locks status to `PAYOUT_PENDING`. Repeat claims revert immediately.
+- **Parent-Child Linkage & Anti-Replay:** `confirm_payout` queries RPC to verify child transfer `triggered_by` originates from parent contract call referencing matching `bounty_id`, and records hash in `confirmed_transfers`.
+- **Fail-Safe Recovery (`resolve_failed_payout`):** Allows unlocking `PAYOUT_PENDING` back to `CLAIMABLE` if on-chain child transaction fails.
 
 ### 3. Dual-Sided Protection
 - **Hunter Protection:**
