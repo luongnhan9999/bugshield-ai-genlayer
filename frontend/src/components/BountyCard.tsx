@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Bounty, cancelBountyOnChain, claimBountyPayoutOnChain, formatRewardAmount } from "../lib/genlayer";
+import { Bounty, cancelBountyOnChain, claimBountyPayoutOnChain, confirmPayoutOnChain, formatRewardAmount } from "../lib/genlayer";
 import {
   ShieldAlert,
   CheckCircle2,
@@ -17,6 +17,7 @@ import {
   Crown,
   UserCheck,
   RotateCcw,
+  CheckCheck,
 } from "lucide-react";
 
 interface BountyCardProps {
@@ -37,15 +38,40 @@ export const BountyCard: React.FC<BountyCardProps> = ({
   );
   const [isCancelling, setIsCancelling] = useState(false);
   const [isClaiming, setIsClaiming] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
 
   const isCreator =
     Boolean(currentAccount) &&
     currentAccount?.toLowerCase() === bounty.creator.toLowerCase();
 
+  const isWinner = currentAccount && bounty.winner && bounty.winner.toLowerCase() === currentAccount.toLowerCase();
+
   const canClaim =
     bounty.payout_status === "CLAIMABLE" &&
     ((bounty.status === "RESOLVED" && currentAccount?.toLowerCase() === bounty.winner.toLowerCase()) ||
       (bounty.status === "CANCELLED" && isCreator));
+
+  const handleConfirmPayout = async () => {
+    if (!currentAccount || typeof window === "undefined" || !window.ethereum) {
+      alert("Web3 Wallet Connection Required: Please connect your wallet.");
+      return;
+    }
+    const transferTx = prompt("Enter outbound transfer Tx Hash to verify & finalize settlement:", bounty.last_payout_tx || "");
+    if (!transferTx) return;
+
+    setIsConfirming(true);
+    try {
+      const res = await confirmPayoutOnChain(bounty.id, transferTx.trim(), currentAccount);
+      alert(`✅ Settlement Finalized Successfully On-Chain!\n\nTx Hash: ${res.txHash}\nStatus: ${res.updatedBounty.payout_status}`);
+      if (onBountyCancelled) {
+        onBountyCancelled(bounty.id, res.updatedBounty);
+      }
+    } catch (err: any) {
+      alert(`❌ Settlement Confirmation Failed:\n\n${err.message || err}`);
+    } finally {
+      setIsConfirming(false);
+    }
+  };
 
   const handleClaimPayout = async () => {
     if (!currentAccount || typeof window === "undefined" || !window.ethereum) {
@@ -276,14 +302,25 @@ export const BountyCard: React.FC<BountyCardProps> = ({
         ) : (
           <div className="flex items-center space-x-2">
             {canClaim && (
-              <button
-                onClick={handleClaimPayout}
-                disabled={isClaiming}
-                className="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 transition-all shadow-md shadow-amber-500/20"
-              >
-                <Award className="w-3.5 h-3.5 mr-1 text-slate-950" />
-                {isClaiming ? "Claiming..." : "Claim Escrow"}
-              </button>
+              <>
+                <button
+                  onClick={handleClaimPayout}
+                  disabled={isClaiming}
+                  className="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 transition-all shadow-md shadow-amber-500/20"
+                >
+                  <Award className="w-3.5 h-3.5 mr-1 text-slate-950" />
+                  {isClaiming ? "Claiming..." : "Claim Escrow"}
+                </button>
+                <button
+                  onClick={handleConfirmPayout}
+                  disabled={isConfirming}
+                  title="Verify finalized outbound transfer and complete settlement on-chain"
+                  className="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 transition-all"
+                >
+                  <CheckCheck className="w-3.5 h-3.5 mr-1 text-emerald-400" />
+                  {isConfirming ? "Verifying..." : "Confirm Settlement"}
+                </button>
+              </>
             )}
             <span className="inline-flex items-center text-xs text-slate-500 font-medium">
               <Lock className="w-3.5 h-3.5 mr-1 text-slate-500" />

@@ -23,25 +23,26 @@ export interface Bounty {
   created_at?: string;
   submission_count?: string;
   payout_status?: "UNPAID" | "PAID" | "CLAIMABLE" | "REFUNDED";
+  last_payout_tx?: string;
 }
 
 export const GENLAYER_TESTNET_CONFIG = {
-  chainId: "0x107D", // 4221 in hex (GenLayer Asimov Testnet)
-  chainName: "GenLayer Asimov Testnet",
-  rpcUrls: [process.env.NEXT_PUBLIC_GENLAYER_RPC || "https://rpc-asimov.genlayer.com"],
+  chainId: "0xF22F", // 61999 in hex (GenLayer Studionet)
+  chainName: "GenLayer Studionet",
+  rpcUrls: [process.env.NEXT_PUBLIC_GENLAYER_RPC || "https://studio.genlayer.com/api"],
   nativeCurrency: {
     name: "GenLayer Token",
     symbol: "GEN",
     decimals: 18,
   },
-  blockExplorerUrls: ["https://scan-asimov.genlayer.com"],
+  blockExplorerUrls: ["https://explorer-studio.genlayer.com"],
 };
 
 // Target Intelligent Contract Address
 export const CONTRACT_ADDRESS =
-  process.env.VITE_CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "0xe0BB5E58A841e5038AcE79791Cf22B66074eC742";
+  process.env.VITE_CONTRACT_ADDRESS || process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "0x4C60fDe7d07c2e7F31ca6056ad273997f5784C32";
 
-// GenLayer Consensus Main Contract on Asimov Testnet
+// GenLayer Consensus Main Contract
 export const CONSENSUS_MAIN_CONTRACT = "0x6CAFF6769d70824745AD895663409DC70aB5B28E";
 
 export const INITIAL_BOUNTIES: Bounty[] = [];
@@ -429,6 +430,7 @@ export async function getBountyFromRPC(bountyId: string): Promise<Bounty | null>
       created_at: String(raw.created_at || "0"),
       submission_count: String(raw.submission_count || "0"),
       payout_status: (raw.payout_status || "UNPAID") as "UNPAID" | "PAID" | "CLAIMABLE" | "REFUNDED",
+      last_payout_tx: String(raw.last_payout_tx || ""),
     };
   } catch {
     return null;
@@ -504,21 +506,9 @@ export async function createBountyOnChain(
   }
 
   if (!fetchedBounty) {
-    fetchedBounty = {
-      id: bountyId,
-      creator: account,
-      title: title,
-      target_repo_url: targetRepoUrl,
-      vulnerability_description: vulnerabilityDescription,
-      expected_fix_criteria: expectedFixCriteria,
-      reward_amount: formatRewardAmount(weiAmount.toString()),
-      status: "OPEN",
-      winner: "",
-      ai_verdict_reason: "Awaiting Submissions",
-      patch_pr_url: "",
-      created_at: String(Math.floor(Date.now() / 1000)),
-      submission_count: "0",
-    };
+    throw new Error(
+      `Bounty creation confirmed on-chain (Tx: ${txHash.slice(0, 10)}...), but contract state indexing is still pending. Please refresh the page to view your live bounty.`
+    );
   }
 
   return { txHash, bounty: fetchedBounty };
@@ -644,6 +634,7 @@ export async function getBountiesFromRPC(): Promise<Bounty[]> {
       created_at: String(b.created_at || "0"),
       submission_count: String(b.submission_count || "0"),
       payout_status: (b.payout_status || "UNPAID") as "UNPAID" | "PAID" | "CLAIMABLE" | "REFUNDED",
+      last_payout_tx: String(b.last_payout_tx || ""),
     }));
   } catch {
     return [];
@@ -732,3 +723,47 @@ export async function claimBountyPayoutOnChain(
 
   return { txHash, updatedBounty: updatedBounty || ({ id: bountyId } as Bounty) };
 }
+
+/**
+ * SETTLEMENT FINALIZATION (Pavel Kolosov Compliance):
+ * Confirms outbound transfer on-chain via consensus validators and finalizes payout to PAID / REFUNDED.
+ */
+export async function confirmPayoutOnChain(
+  bountyId: string,
+  transferTxHash: string,
+  account: string
+): Promise<{ txHash: string; updatedBounty: Bounty }> {
+  if (typeof window === "undefined" || !window.ethereum) {
+    throw new Error("MetaMask or compatible Web3 wallet not found.");
+  }
+
+  const calldataBytes = encodeCalldata({
+    method: "confirm_payout",
+    args: [bountyId, transferTxHash],
+  });
+  const txDataRlp = encodeRlp([calldataBytes, "0x"]);
+  const callData = encodeAddTransaction(account, CONTRACT_ADDRESS, 5, 3, txDataRlp);
+
+  const txHash = (await window.ethereum.request({
+    method: "eth_sendTransaction",
+    params: [
+      {
+        from: account,
+        to: CONTRACT_ADDRESS,
+        value: "0x0",
+        data: callData,
+      },
+    ],
+  })) as string;
+
+  if (!txHash) {
+    throw new Error("On-chain settlement confirmation transaction was rejected or failed to broadcast.");
+  }
+
+  await waitForTxFinality(txHash);
+  await new Promise((r) => setTimeout(r, 4000));
+  const updatedBounty = await getBountyFromRPC(bountyId);
+
+  return { txHash, updatedBounty: updatedBounty || ({ id: bountyId } as Bounty) };
+}
+

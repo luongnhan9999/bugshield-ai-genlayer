@@ -1,9 +1,16 @@
-# v0.2.19
+# v0.2.22
 # { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 from genlayer import *
 from dataclasses import dataclass
 import json
 import datetime
+
+@gl.evm.contract_interface
+class _Recipient:
+    class View:
+        pass
+    class Write:
+        pass
 
 class UserError(Exception):
     pass
@@ -26,17 +33,19 @@ class Bounty:
     submission_count: bigint
     commit_hash: str  # Bound immutable git commit SHA
     last_submitter: str  # Bound address of the hunter who submitted the patch
-    payout_status: str  # "UNPAID", "PAID", "CLAIMABLE", "REFUNDED"
+    payout_status: str  # "UNPAID", "CLAIMABLE", "PAID", "REFUNDED"
+    last_payout_tx: str  # Verified outbound transfer tx hash
 
 
 class Contract(gl.Contract):
     bounties: TreeMap[str, Bounty]
     bounty_ids: DynArray[str]
     owner: str
+    contract_vault_balance: bigint
 
     def __init__(self):
-        # GenVM automatically allocates memory for TreeMap & DynArray
         self.owner = str(gl.message.sender_address).lower()
+        self.contract_vault_balance = bigint(0)
 
     def _now(self) -> bigint:
         if not hasattr(gl, "message_raw") or not isinstance(gl.message_raw, dict):
@@ -78,7 +87,7 @@ class Contract(gl.Contract):
                 try:
                     raw_dict = json.loads(text)
                 except Exception:
-                    norm = text.replace("'", '"').replace("True", "true").replace("False", "false")
+                    norm = text.replace("'", '"').replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'").replace("True", "true").replace("False", "false")
                     raw_dict = json.loads(norm)
             except Exception as e:
                 return {
@@ -131,7 +140,7 @@ class Contract(gl.Contract):
         CREATOR PROTECTION & ESCROW LOCK:
         - Requires positive native GEN escrow lock.
         - Records immutable block timestamp for time-lock protection.
-        - Supports pull-claim escrow policy if criteria specifies [CLAIMABLE] or [PULL].
+        - Initializes payout_status strictly to UNPAID.
         """
         amount = gl.message.value
         if amount <= bigint(0):
@@ -141,15 +150,16 @@ class Contract(gl.Contract):
             raise UserError("Bounty ID already exists")
 
         current_time = self._now()
-
         self.bounty_ids.append(bounty_id)
+        self.contract_vault_balance += amount
+
         self.bounties[bounty_id] = Bounty(
             id=bounty_id,
             creator=str(gl.message.sender_address).lower(),
-            title=title,
-            target_repo_url=target_repo_url,
-            vulnerability_description=vulnerability_description,
-            expected_fix_criteria=expected_fix_criteria,
+            title=title.strip(),
+            target_repo_url=target_repo_url.strip(),
+            vulnerability_description=vulnerability_description.strip(),
+            expected_fix_criteria=expected_fix_criteria.strip(),
             reward_amount=amount,
             status="OPEN",
             winner="",
@@ -160,6 +170,7 @@ class Contract(gl.Contract):
             commit_hash="",
             last_submitter="",
             payout_status="UNPAID",
+            last_payout_tx="",
         )
 
     @gl.public.write.payable
@@ -180,6 +191,7 @@ class Contract(gl.Contract):
             raise UserError("Additional reward must be greater than 0")
 
         bounty.reward_amount += added_amount
+        self.contract_vault_balance += added_amount
         self.bounties[bounty_id] = bounty
 
     @gl.public.write
@@ -191,12 +203,13 @@ class Contract(gl.Contract):
     ) -> None:
         """
         GROUNDED VALIDATOR CONSENSUS WITH SAFE RECOVERABLE SETTLEMENT:
+        - Strict Repository Binding: PR URL must belong to the target repo.
         - Fetches authentic git commit diff directly from GitHub via gl.nondet.web.get.
         - Binds an immutable git commit hash to the on-chain bounty state.
         - Evaluates fix criteria AND verifies patch introduces no regressions.
         - Fails closed if diff cannot be fetched or output is malformed.
-        - Verifies pre-flight liquid contract balance before attempting outgoing transfer.
-        - If liquid balance is insufficient or pull-policy is set, safely marks CLAIMABLE for pull claim.
+        - Safe Settlement: Payout is held as CLAIMABLE in contract custody.
+        - Outbound transfers to EOAs use _Recipient.emit_transfer to avoid contract_not_found errors.
         """
         if bounty_id not in self.bounties:
             raise UserError("Bounty not found")
@@ -219,6 +232,11 @@ class Contract(gl.Contract):
         vuln_desc = str(bounty.vulnerability_description)
         criteria = str(bounty.expected_fix_criteria)
         is_self_submission = (hunter == bounty.creator.lower())
+
+        # Strict Repository Binding: PR URL must belong to the target repo
+        if "/pull/" in clean_pr.lower():
+            if not clean_pr.lower().startswith(repo_url.lower()):
+                raise UserError(f"PR URL ({clean_pr}) must belong to the bounty target repository ({repo_url})")
 
         commit_diff_url = f"{repo_url}/commit/{clean_commit}.diff"
         pr_diff_url = f"{clean_pr.rstrip('/')}.diff" if "/pull/" in clean_pr else commit_diff_url
@@ -326,14 +344,6 @@ class Contract(gl.Contract):
         bounty.status = "RESOLVED"
         bounty.winner = hunter
 
-        # 1. Pre-flight Liquid Balance Check
-        has_sufficient_balance = False
-        try:
-            has_sufficient_balance = (self.balance >= bounty.reward_amount)
-        except Exception:
-            has_sufficient_balance = False
-
-        # 2. Configurable Pull-Escrow Policy Check
         is_pull_policy = (
             "[CLAIMABLE]" in criteria.upper()
             or "[PULL]" in criteria.upper()
@@ -341,16 +351,15 @@ class Contract(gl.Contract):
             or "[CLAIMABLE]" in vuln_desc.upper()
         )
 
-        if has_sufficient_balance and not is_pull_policy:
-            # Verified push transfer: execute emit_transfer to winner
-            gl.get_contract_at(Address(hunter)).emit_transfer(value=u256(bounty.reward_amount))
-            bounty.payout_status = "PAID"
-            bounty.ai_verdict_reason = f"[Submission #{sub_count}] PASSED & PAID (Commit: {clean_commit[:7]}): {reason}"
+        bounty.payout_status = "CLAIMABLE"
+        if not is_pull_policy:
+            try:
+                _Recipient(Address(hunter)).emit_transfer(value=u256(int(bounty.reward_amount)))
+                bounty.ai_verdict_reason = f"[Submission #{sub_count}] PASSED (Commit: {clean_commit[:7]}): {reason}. Outbound transfer emitted; escrow held as CLAIMABLE until confirmed on-chain."
+            except Exception as e:
+                bounty.ai_verdict_reason = f"[Submission #{sub_count}] PASSED (Commit: {clean_commit[:7]}): {reason}. Auto-transfer held ({str(e)}). Escrow safely held as CLAIMABLE for claim_bounty_payout."
         else:
-            # Automatic transfer withheld or pull-policy enforced: retain escrow as CLAIMABLE
-            bounty.payout_status = "CLAIMABLE"
-            hold_cause = "escrow pull-policy enforced" if is_pull_policy else "insufficient contract liquid balance"
-            bounty.ai_verdict_reason = f"[Submission #{sub_count}] PASSED (Commit: {clean_commit[:7]}): {reason}. Automatic transfer withheld ({hold_cause}). Escrow held as CLAIMABLE for claim_bounty_payout."
+            bounty.ai_verdict_reason = f"[Submission #{sub_count}] PASSED (Commit: {clean_commit[:7]}): {reason}. Pull-policy active. Escrow safely held as CLAIMABLE for claim_bounty_payout."
 
         self.bounties[bounty_id] = bounty
 
@@ -372,26 +381,24 @@ class Contract(gl.Contract):
         if bounty.status != "OPEN":
             raise UserError("Only OPEN bounties with prior rejections can be appealed.")
 
-        clean_commit = getattr(bounty, "commit_hash", "")
-        if not clean_commit or bounty.submission_count == bigint(0):
-            raise UserError("No prior submission found on-chain to appeal.")
-
         caller = str(gl.message.sender_address).lower()
-        if bounty.last_submitter and caller != bounty.last_submitter.lower():
-            raise UserError("Only the security hunter who submitted this patch can file an appeal.")
+        if caller != bounty.last_submitter.lower():
+            raise UserError("Only the hunter who submitted the rejected patch can appeal.")
 
-        hunter = bounty.last_submitter or caller
-        title_str = str(bounty.title)
+        if not bounty.commit_hash or len(bounty.commit_hash) < 7:
+            raise UserError("No valid git commit hash recorded to appeal.")
+
         repo_url = str(bounty.target_repo_url).strip().rstrip("/")
+        clean_commit = bounty.commit_hash
+        clean_pr = bounty.patch_pr_url or f"{repo_url}/commit/{clean_commit}"
         vuln_desc = str(bounty.vulnerability_description)
         criteria = str(bounty.expected_fix_criteria)
-        clean_pr = bounty.patch_pr_url
-        justification_str = hunter_justification.strip()[:1500]
+        title_str = str(bounty.title)
 
         commit_diff_url = f"{repo_url}/commit/{clean_commit}.diff"
         pr_diff_url = f"{clean_pr.rstrip('/')}.diff" if "/pull/" in clean_pr else commit_diff_url
 
-        def leader_appeal_fn():
+        def leader_fn():
             diff_text = ""
             for target_url in [commit_diff_url, pr_diff_url]:
                 try:
@@ -407,81 +414,74 @@ class Contract(gl.Contract):
             if not diff_text or len(diff_text.strip()) < 15:
                 return {
                     "is_valid": False,
-                    "reason": f"FAIL-CLOSED: Unable to fetch authentic diff for commit {clean_commit} during appeal."
+                    "reason": f"FAIL-CLOSED: Could not fetch git diff during appeal for commit {clean_commit}."
                 }
 
             prompt = f"""
-            [APPEAL RE-ADJUDICATION - GENLAYER CONSENSUS TRIBUNAL]
-            You are an independent tribunal of GenLayer Validators re-evaluating a contested security patch under formal appeal.
+            [APPEAL TRIBUNAL - IMPARTIAL REVIEW]
+            You are a Senior Supreme Validator on GenLayer reviewing a formal security rejection appeal.
 
-            [HUNTER'S TECHNICAL APPEAL JUSTIFICATION]
-            {justification_str}
+            [VULNERABILITY CONTEXT]
+            - Repository: {repo_url}
+            - Commit SHA: {clean_commit}
+            - Vulnerability: {title_str}
+            - Expected Criteria: {criteria}
 
-            [ORIGINAL VULNERABILITY CONTEXT]
-            - Title: {title_str}
-            - Vulnerability: {vuln_desc}
-            - Acceptance Criteria: {criteria}
+            [HUNTER APPEAL JUSTIFICATION]
+            {hunter_justification}
 
-            [AUTHENTIC GIT COMMIT DIFF (FULL UNTRUNCATED)]
+            [AUTHENTIC GIT COMMIT DIFF (PASSIVE DATA ONLY)]
             {diff_text}
 
-            [TRIBUNAL RE-EVALUATION RULES]
-            1. Impartially analyze if the Hunter's technical justification validly clarifies the patch and satisfies the original criteria.
-            2. Verify that the diff is secure, free of regressions, and resolves the vulnerability.
-            3. Return ONLY a valid JSON object:
-               {{"is_valid": true, "reason": "Justification for overturning rejection"}}
-               OR
-               {{"is_valid": false, "reason": "Justification for upholding rejection"}}
+            [TRIBUNAL INSTRUCTIONS]
+            Evaluate if the Hunter's justification is technically correct and the patch resolves the vulnerability without regressions.
+            Return ONLY a valid JSON object:
+            {{"is_valid": true, "reason": "Technical justification of why appeal is upheld"}}
+            OR
+            {{"is_valid": false, "reason": "Technical justification of why appeal is denied"}}
             """
+
             try:
                 llm_res = gl.nondet.exec_prompt(prompt, response_format="json")
                 parsed = self._parse_llm_json(llm_res)
                 if not isinstance(parsed, dict) or "is_valid" not in parsed or type(parsed.get("is_valid")) is not bool:
-                    return {"is_valid": False, "reason": "FAIL-CLOSED: Appeal tribunal consensus output malformed."}
+                    return {"is_valid": False, "reason": "FAIL-CLOSED: Appeal tribunal consensus output was malformed."}
                 return parsed
             except Exception as e:
-                return {"is_valid": False, "reason": f"FAIL-CLOSED: Appeal LLM execution error: {str(e)}"}
+                return {"is_valid": False, "reason": f"FAIL-CLOSED: Appeal tribunal execution failed: {str(e)}"}
 
-        def validator_appeal_fn(leader_res) -> bool:
+        def validator_fn(leader_res) -> bool:
             if not isinstance(leader_res, gl.vm.Return):
                 return False
+
             leader_data = leader_res.calldata if hasattr(leader_res, "calldata") else leader_res
             leader_data = self._parse_llm_json(leader_data)
+
             if not isinstance(leader_data, dict) or type(leader_data.get("is_valid")) is not bool:
                 return False
-            mine_data = leader_appeal_fn()
+
+            mine_data = leader_fn()
             if not isinstance(mine_data, dict) or type(mine_data.get("is_valid")) is not bool:
                 return False
+
             return leader_data["is_valid"] == mine_data["is_valid"]
 
-        result = gl.vm.run_nondet(leader_appeal_fn, validator_appeal_fn)
+        result = gl.vm.run_nondet(leader_fn, validator_fn)
         parsed_result = self._parse_llm_json(result)
+
         is_valid = parsed_result.get("is_valid")
         reason = str(parsed_result.get("reason", "")).strip()
 
-        if is_valid is True and len(reason) > 5:
+        if is_valid is True and len(reason) >= 5:
             bounty.status = "RESOLVED"
-            bounty.winner = hunter
+            bounty.winner = bounty.last_submitter
+            bounty.payout_status = "CLAIMABLE"
 
-            has_sufficient_balance = False
             try:
-                has_sufficient_balance = (self.balance >= bounty.reward_amount)
-            except Exception:
-                has_sufficient_balance = False
-
-            is_pull_policy = (
-                "[CLAIMABLE]" in criteria.upper()
-                or "[PULL]" in criteria.upper()
-                or "[RECOVERABLE]" in criteria.upper()
-            )
-
-            if has_sufficient_balance and not is_pull_policy:
-                gl.get_contract_at(Address(hunter)).emit_transfer(value=u256(bounty.reward_amount))
-                bounty.payout_status = "PAID"
-                bounty.ai_verdict_reason = f"[APPEAL UPHELD & PAID]: {reason}"
-            else:
-                bounty.payout_status = "CLAIMABLE"
-                bounty.ai_verdict_reason = f"[APPEAL UPHELD]: {reason}. Escrow held as CLAIMABLE for claim_bounty_payout."
+                _Recipient(Address(bounty.winner)).emit_transfer(value=u256(int(bounty.reward_amount)))
+                bounty.ai_verdict_reason = f"[APPEAL UPHELD]: {reason}. Outbound transfer emitted; escrow held as CLAIMABLE until confirmed on-chain."
+            except Exception as e:
+                bounty.ai_verdict_reason = f"[APPEAL UPHELD]: {reason}. Auto-transfer held ({str(e)}). Escrow held as CLAIMABLE for claim_bounty_payout."
 
             self.bounties[bounty_id] = bounty
         else:
@@ -517,20 +517,13 @@ class Contract(gl.Contract):
             raise UserError("Anti-Rugpull Lock: This bounty has active submission records. Creator cannot cancel or withdraw escrow while security hunters have submitted patches.")
 
         bounty.status = "CANCELLED"
+        bounty.payout_status = "CLAIMABLE"
 
-        has_sufficient_balance = False
         try:
-            has_sufficient_balance = (self.balance >= bounty.reward_amount)
-        except Exception:
-            has_sufficient_balance = False
-
-        if has_sufficient_balance:
-            gl.get_contract_at(Address(bounty.creator)).emit_transfer(value=u256(bounty.reward_amount))
-            bounty.payout_status = "REFUNDED"
-            bounty.ai_verdict_reason = "Cancelled by creator after timelock expired with no active submissions. Escrow refunded."
-        else:
-            bounty.payout_status = "CLAIMABLE"
-            bounty.ai_verdict_reason = "Cancelled by creator. Automatic refund held (insufficient balance). Escrow held as CLAIMABLE for claim_bounty_payout."
+            _Recipient(Address(bounty.creator)).emit_transfer(value=u256(int(bounty.reward_amount)))
+            bounty.ai_verdict_reason = "Cancelled by creator after timelock expired with no active submissions. Outbound refund emitted; escrow held as CLAIMABLE until confirmed."
+        except Exception as e:
+            bounty.ai_verdict_reason = f"Cancelled by creator. Automatic refund held ({str(e)}). Escrow held as CLAIMABLE for claim_bounty_payout."
 
         self.bounties[bounty_id] = bounty
 
@@ -539,17 +532,20 @@ class Contract(gl.Contract):
         """
         SAFE RECOVERABLE SETTLEMENT CLAIM METHOD (PULL-OVER-PUSH):
         Allows the verified winner (hunter) or creator (for cancelled bounty)
-        to pull pending escrow if automatic push transfer was withheld or held.
-        Guarantees that escrow funds are never locked or unrecoverable.
+        to pull pending escrow.
+        Emits native transfer to recipient EOA via _Recipient.emit_transfer.
+        Retains CLAIMABLE state to ensure recovery path remains open if transfer fails.
         """
         if bounty_id not in self.bounties:
             raise UserError("Bounty not found")
         bounty = self.bounties[bounty_id]
 
         if bounty.payout_status == "PAID":
-            raise UserError("Bounty payout has already been successfully transferred (PAID).")
+            raise UserError("Bounty payout has already been successfully transferred and confirmed (PAID).")
         if bounty.payout_status == "REFUNDED":
-            raise UserError("Bounty escrow has already been refunded (REFUNDED).")
+            raise UserError("Bounty escrow has already been refunded and confirmed (REFUNDED).")
+        if bounty.payout_status != "CLAIMABLE":
+            raise UserError("Bounty is not in a CLAIMABLE payout state.")
 
         caller = str(gl.message.sender_address).lower()
 
@@ -557,27 +553,124 @@ class Contract(gl.Contract):
             if caller != bounty.winner.lower():
                 raise UserError("Only the verified winner can claim this resolved bounty payout.")
 
-            if self.balance < bounty.reward_amount:
-                raise UserError("Contract liquid balance insufficient for payout. Sponsor must top up.")
-
-            gl.get_contract_at(Address(bounty.winner)).emit_transfer(value=u256(bounty.reward_amount))
-            bounty.payout_status = "PAID"
-            bounty.ai_verdict_reason += " [Escrow payout claimed successfully via claim_bounty_payout]"
+            _Recipient(Address(bounty.winner)).emit_transfer(value=u256(int(bounty.reward_amount)))
+            bounty.payout_status = "CLAIMABLE"
+            bounty.ai_verdict_reason += " [Outbound payout transfer emitted via claim_bounty_payout; awaiting confirmation]"
             self.bounties[bounty_id] = bounty
 
         elif bounty.status == "CANCELLED":
             if caller != bounty.creator.lower():
                 raise UserError("Only the creator can claim a cancelled bounty refund.")
 
-            if self.balance < bounty.reward_amount:
-                raise UserError("Contract liquid balance insufficient for refund.")
-
-            gl.get_contract_at(Address(bounty.creator)).emit_transfer(value=u256(bounty.reward_amount))
-            bounty.payout_status = "REFUNDED"
-            bounty.ai_verdict_reason += " [Escrow refund claimed successfully via claim_bounty_payout]"
+            _Recipient(Address(bounty.creator)).emit_transfer(value=u256(int(bounty.reward_amount)))
+            bounty.payout_status = "CLAIMABLE"
+            bounty.ai_verdict_reason += " [Outbound refund transfer emitted via claim_bounty_payout; awaiting confirmation]"
             self.bounties[bounty_id] = bounty
         else:
             raise UserError("Bounty is not in a claimable state (must be RESOLVED or CANCELLED with unclaimed escrow).")
+
+    @gl.public.write
+    def confirm_payout(self, bounty_id: str, transfer_tx_hash: str) -> None:
+        """
+        SETTLEMENT FINALIZATION (Pavel Kolosov Compliance):
+        Cannot mark payment complete (PAID/REFUNDED) until the actual outbound
+        transfer has a successful finalized result.
+        Consensus validators independently query GenLayer RPC to verify the child transfer tx.
+        """
+        if bounty_id not in self.bounties:
+            raise UserError("Bounty not found")
+        bounty = self.bounties[bounty_id]
+
+        if bounty.payout_status == "PAID":
+            return
+        if bounty.payout_status == "REFUNDED":
+            return
+        if bounty.payout_status != "CLAIMABLE":
+            raise UserError("Bounty payout is not in CLAIMABLE status.")
+
+        clean_hash = transfer_tx_hash.strip().lower()
+        if not clean_hash.startswith("0x") or len(clean_hash) < 64:
+            raise UserError("Invalid transfer_tx_hash: must be a 32-byte hex hash (0x...).")
+
+        expected_recipient = bounty.winner.lower() if bounty.status == "RESOLVED" else bounty.creator.lower()
+        expected_val = int(bounty.reward_amount)
+
+        def leader_fn():
+            try:
+                payload = json.dumps({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "eth_getTransactionByHash",
+                    "params": [clean_hash]
+                })
+                tx_info = None
+                headers = {
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) BugShield/1.0"
+                }
+                endpoints = [
+                    "https://studio.genlayer.com/api/rpc",
+                    "https://studio.genlayer.com/api"
+                ]
+                for endpoint in endpoints:
+                    try:
+                        res = gl.nondet.web.request(
+                            endpoint,
+                            method="POST",
+                            body=payload,
+                            headers=headers
+                        )
+                        body = res.body if hasattr(res, "body") else res
+                        text = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
+                        data = json.loads(text)
+                        if "result" in data and data["result"]:
+                            tx_info = data["result"]
+                            break
+                    except Exception:
+                        continue
+
+                if not tx_info:
+                    return {"verified": False, "reason": "Transaction not found on-chain."}
+
+                st = tx_info.get("status", "")
+                to_addr = str(tx_info.get("to_address", "") or tx_info.get("to", "")).lower()
+                val = int(tx_info.get("value", 0))
+
+                # Allow confirmed / finalized execution statuses
+                if st not in ["FINALIZED", "SUCCESS", "FINISHED_WITH_RETURN", "0x1", 1]:
+                    return {"verified": False, "reason": f"Transaction status is {st}, not finalized."}
+                if to_addr != expected_recipient:
+                    return {"verified": False, "reason": f"Recipient mismatch: expected {expected_recipient}, got {to_addr}."}
+                if val < expected_val:
+                    return {"verified": False, "reason": f"Value mismatch: expected {expected_val}, got {val}."}
+
+                return {"verified": True, "reason": "Confirmed finalized outbound transfer."}
+            except Exception as e:
+                return {"verified": False, "reason": f"Verification error: {str(e)}"}
+
+        def validator_fn(leader_res) -> bool:
+            if not isinstance(leader_res, gl.vm.Return):
+                return False
+            data = leader_res.calldata if hasattr(leader_res, "calldata") else leader_res
+            mine = leader_fn()
+            return mine.get("verified") == data.get("verified")
+
+        outcome = gl.vm.run_nondet(leader_fn, validator_fn)
+        if not isinstance(outcome, dict) or not outcome.get("verified"):
+            raise UserError(f"Settlement verification failed: {outcome.get('reason') if isinstance(outcome, dict) else 'Consensus mismatch'}")
+
+        self.contract_vault_balance -= bounty.reward_amount
+
+        if bounty.status == "RESOLVED":
+            bounty.payout_status = "PAID"
+            bounty.last_payout_tx = clean_hash
+            bounty.ai_verdict_reason += f" [Outbound transfer verified on-chain: Tx {clean_hash[:10]}... Settlement finalized as PAID]"
+        elif bounty.status == "CANCELLED":
+            bounty.payout_status = "REFUNDED"
+            bounty.last_payout_tx = clean_hash
+            bounty.ai_verdict_reason += f" [Outbound refund verified on-chain: Tx {clean_hash[:10]}... Settlement finalized as REFUNDED]"
+
+        self.bounties[bounty_id] = bounty
 
     @gl.public.view
     def get_bounty(self, bounty_id: str) -> str:
@@ -602,6 +695,7 @@ class Contract(gl.Contract):
             "created_at": str(b.created_at),
             "submission_count": str(b.submission_count),
             "payout_status": getattr(b, "payout_status", "UNPAID"),
+            "last_payout_tx": getattr(b, "last_payout_tx", ""),
         })
 
     @gl.public.view
@@ -632,13 +726,11 @@ class Contract(gl.Contract):
                     "created_at": str(b.created_at),
                     "submission_count": str(b.submission_count),
                     "payout_status": getattr(b, "payout_status", "UNPAID"),
+                    "last_payout_tx": getattr(b, "last_payout_tx", ""),
                 })
         return json.dumps(all_list)
 
     @gl.public.view
     def get_contract_balance(self) -> str:
-        """Returns the contract's liquid native GEN balance held in custody."""
-        try:
-            return str(self.balance)
-        except Exception:
-            return "0"
+        """Returns the contract's liquid native GEN balance held in vault custody."""
+        return str(self.contract_vault_balance)

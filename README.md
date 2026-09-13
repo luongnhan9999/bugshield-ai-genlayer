@@ -7,25 +7,25 @@
 ## 🌐 Live Verified Deployments
 
 - **Live Production App:** [https://bugshield-ai-genlayer.vercel.app](https://bugshield-ai-genlayer.vercel.app)
-- **Verified Contract Address (Studionet):** [`0xe0BB5E58A841e5038AcE79791Cf22B66074eC742`](https://explorer-studio.genlayer.com/address/0xe0BB5E58A841e5038AcE79791Cf22B66074eC742)
-- **GenLayer Studio Explorer:** [https://explorer-studio.genlayer.com/address/0xe0BB5E58A841e5038AcE79791Cf22B66074eC742](https://explorer-studio.genlayer.com/address/0xe0BB5E58A841e5038AcE79791Cf22B66074eC742)
+- **Verified Contract Address (Studionet):** [`0x4C60fDe7d07c2e7F31ca6056ad273997f5784C32`](https://explorer-studio.genlayer.com/address/0x4C60fDe7d07c2e7F31ca6056ad273997f5784C32)
+- **GenLayer Studio Explorer:** [https://explorer-studio.genlayer.com/address/0x4C60fDe7d07c2e7F31ca6056ad273997f5784C32](https://explorer-studio.genlayer.com/address/0x4C60fDe7d07c2e7F31ca6056ad273997f5784C32)
 - **GitHub Repository:** [https://github.com/luongnhan9999/bugshield-ai-genlayer](https://github.com/luongnhan9999/bugshield-ai-genlayer)
 
 ---
 
 ## 🔍 Verified On-Chain Settlement Evidence (Steward Proof)
 
-All evidence transactions were executed live on GenLayer Studionet on contract [`0xe0BB5E58A841e5038AcE79791Cf22B66074eC742`](https://explorer-studio.genlayer.com/address/0xe0BB5E58A841e5038AcE79791Cf22B66074eC742):
+All evidence transactions were executed live on GenLayer Studionet on contract [`0x4C60fDe7d07c2e7F31ca6056ad273997f5784C32`](https://explorer-studio.genlayer.com/address/0x4C60fDe7d07c2e7F31ca6056ad273997f5784C32):
 
-| Scenario | Bounty ID | Creation Tx | Evaluation Tx | Claim Tx | On-Chain Result |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **1. Fail-Closed Rejection** | `bounty-failclosed-1789272672` | [`0x5700fd...`](https://explorer-studio.genlayer.com/tx/0x5700fd1a8b0bff078193590a8c3df30fe23f99c7f88c002b4c52396fb7d2de8b) | [`0xfdd631...`](https://explorer-studio.genlayer.com/tx/0xfdd63195a5044c1817407551d2a37236a5e5eff214517f1405234890f81df00e) | N/A | **`status: OPEN`**, **`payout_status: UNPAID`**. Multi-validator LLM consensus rejected irrelevant patch `18a13a2`. Escrow safely preserved. |
-| **2. Confirmed Outgoing Transfer** | `bounty-instant-paid-1789272705` | [`0xac348c...`](https://explorer-studio.genlayer.com/tx/0xac348c7acb01f0f6e7a0eb8ff660c5ce1b0990d5b80f6cac1b2ab61049524c50) | [`0xede70c...`](https://explorer-studio.genlayer.com/tx/0xede70c23a90418aa1e8da79ef0394982aece93e8a1b12cfd34498cf7b62844a7) | N/A | **`status: RESOLVED`**, **`payout_status: PAID`**. Consensus approved authentic commit `42711b3`, verified liquid balance, emitted transfer. |
-| **3. Failed/Held Transfer & Claim Recovery** | `bounty-claimable-1789272767` | [`0xc54fe5...`](https://explorer-studio.genlayer.com/tx/0xc54fe527e8aafee2679db09693d8487234f1e091ff887dd8eb384d37d9a6ed56) | [`0xc6555c...`](https://explorer-studio.genlayer.com/tx/0xc6555c72bc2b27d2c8e35704d67dbb0c7b49af9264c81a25ffd0fa14cf96d9a5) | [`0x623cfa...`](https://explorer-studio.genlayer.com/tx/0x623cfa6ffb7b29f703a6780a661720d4c9479060110311df095f78dcd93c3e59) | **`CLAIMABLE` ➔ `PAID`**. Evaluated patch held as `CLAIMABLE` (escrow withheld). Authorized winner called `claim_bounty_payout`, transferred escrow, transitioned to `PAID`. |
+| Scenario | Bounty ID | Creation Tx | Evaluation Tx | Claim / Transfer Tx | Confirmation Tx | On-Chain Result |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **1. Fail-Closed Rejection** | `bounty-failclosed-1789309696` | [`0x1a52e8...`](https://explorer-studio.genlayer.com/tx/0x1a52e86d2be6278eed5d78dcabd289b462598745a73bdbbcb0f4d0ad6764ffab) | [`0x6996b2...`](https://explorer-studio.genlayer.com/tx/0x6996b234d059bbb23cc46ef03bd340d0eafce6435d8b2daed2c79b7b86af1fbf) | N/A | N/A | **`status: OPEN`**, **`payout_status: UNPAID`**. Multi-validator LLM consensus rejected irrelevant patch `18a13a2`. Escrow safely preserved. |
+| **2. Criteria Enforcement** | `bounty-valid-1789309733` | [`0xa9f915...`](https://explorer-studio.genlayer.com/tx/0xa9f915e32a4a8474636c0ff7e9008fe4f184176009d315ded96ca73ad6580408) | [`0x914be6...`](https://explorer-studio.genlayer.com/tx/0x914be6e58698e041e98d0d9eb8923739ed16be7fa74163d0fbf53b6d1f244d72) | N/A | N/A | **`status: OPEN`**, **`payout_status: UNPAID`**. Consensus inspected git diff and rejected patch failing criteria. Escrow preserved. |
+| **3. Held Payout ➔ Pull Claim ➔ Settlement Confirmation** | `bounty-claimable-1789309775` | [`0x67fdc0...`](https://explorer-studio.genlayer.com/tx/0x67fdc05dafaa82f3149cd9bcc3a5cfe55c1ea3b664f7f45f18741f3796070aa5) | [`0x035ad9...`](https://explorer-studio.genlayer.com/tx/0x035ad94ab60d3f74a414659cd78ec711efb00030238e152ee5681d415106631d) | [`0xf24fbe...`](https://explorer-studio.genlayer.com/tx/0xf24fbebf4ae2f6acbcf578dcf75c72872dfe7555e3d2b9821cf3cf4a15e5eafa)<br>➔ Transfer [`0x9d15f3...`](https://explorer-studio.genlayer.com/tx/0x9d15f3a3ca82a97223f564574f324615a80ad4e6d9dab337292b386e935a4f52) | [`0xf7d3f3...`](https://explorer-studio.genlayer.com/tx/0xf7d3f38370be0ecbfc234e90dca1aacf2cc2d41563764073f5add066c4fa12bd) | **`CLAIMABLE` ➔ Pull Claim ➔ `PAID`**. Evaluated patch held as `CLAIMABLE`. Winner called `claim_bounty_payout` emitting transfer `0x9d15f3...` (`FINALIZED`, `value_credited: true`, 0 errors). `confirm_payout` verified on-chain and transitioned to **`PAID`**! |
 
 ---
 
-## 🛡️ Key Security & Architecture Highlights (v0.2.20)
+## 🛡️ Key Security & Architecture Highlights (v0.2.22)
 
 ### 1. Strict Output Parsing (Zero Lax Fallbacks)
 - **Parser Architecture:** `_parse_llm_json` accepts dictionaries directly from GenVM and normalizes JSON strings while enforcing `type(is_valid) is bool` (strictly `True` or `False`) and non-empty string `reason`.
@@ -59,8 +59,10 @@ All evidence transactions were executed live on GenLayer Studionet on contract [
 ```
 bugshield-ai-genlayer/
 ├── contracts/
-│   ├── bugshield.py              # Canonical GenLayer Python Intelligent Contract (v0.2.20)
-│   └── bug_shield.py             # Synced Intelligent Contract
+│   └── bugshield.py              # Canonical GenLayer Python Intelligent Contract (v0.2.21)
+├── tests/
+│   ├── mock_gl.py                # Mock GenLayer execution environment
+│   └── test_bugshield_suite.py   # Comprehensive automated test suite (20 tests)
 ├── frontend/
 │   ├── src/
 │   │   ├── app/
@@ -75,7 +77,7 @@ bugshield-ai-genlayer/
 │   │   └── lib/
 │   │       └── genlayer.ts       # Web3 provider & calldata encoder/decoder
 │   ├── package.json              # Next.js 14, Tailwind, Ethers v6
-│   └── .env                      # Contract address & RPC config (0xe0BB...)
+│   └── .env                      # Contract address & RPC config (0x4C60...)
 ├── scripts/
 │   └── deploy.py                 # GenLayer deployment script
 └── README.md                     # Documentation & verified deployment specs
