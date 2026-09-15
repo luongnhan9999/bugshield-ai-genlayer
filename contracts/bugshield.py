@@ -1,4 +1,4 @@
-# v0.2.23
+# v0.2.24
 # { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 from genlayer import *
 from dataclasses import dataclass
@@ -571,14 +571,110 @@ class Contract(gl.Contract):
             raise UserError("Bounty is not in a claimable state (must be RESOLVED or CANCELLED with unclaimed escrow).")
 
     @gl.public.write
+    def bind_pending_transfer(self, bounty_id: str, child_tx_hash: str) -> None:
+        """
+        SETTLEMENT BINDING (Gen. Dave Mandate):
+        After claim_bounty_payout or auto-payout emits a child transfer via _Recipient.emit_transfer(),
+        the child tx hash is NOT available at emission time (GenVM limitation). The caller must:
+        1. Wait for the parent tx to finalize.
+        2. Read triggered_transactions from the parent receipt to discover the child hash.
+        3. Call this method to bind the child hash to the bounty.
+        Contract verifies via consensus that the child tx is FINALIZED and has parent linkage.
+        This binding is REQUIRED before confirm_payout can finalize the settlement.
+        """
+        if bounty_id not in self.bounties:
+            raise UserError("Bounty not found")
+        bounty = self.bounties[bounty_id]
+
+        if bounty.payout_status != "PAYOUT_PENDING":
+            raise UserError(f"Bounty is not in PAYOUT_PENDING status (current: {bounty.payout_status}).")
+
+        if bounty.pending_payout_hash and bounty.pending_payout_hash != "":
+            raise UserError(f"A transfer hash is already bound to this bounty: {bounty.pending_payout_hash[:10]}...")
+
+        clean_hash = child_tx_hash.strip().lower()
+        if not clean_hash.startswith("0x") or len(clean_hash) < 64:
+            raise UserError("Invalid child_tx_hash: must be a 32-byte hex hash (0x...).")
+
+        # Anti-replay: check if this hash was already used for another bounty
+        if clean_hash in self.confirmed_transfers:
+            prior_bounty = self.confirmed_transfers[clean_hash]
+            raise UserError(f"Transfer {clean_hash} has already been confirmed for bounty {prior_bounty}.")
+
+        def leader_fn():
+            try:
+                headers = {
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) BugShield/1.0"
+                }
+                endpoints = [
+                    "https://studio.genlayer.com/api/rpc",
+                    "https://studio.genlayer.com/api"
+                ]
+
+                def rpc_fetch(method, params):
+                    payload = json.dumps({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": method,
+                        "params": params
+                    })
+                    for endpoint in endpoints:
+                        try:
+                            res = gl.nondet.web.request(endpoint, method="POST", body=payload, headers=headers)
+                            body = res.body if hasattr(res, "body") else res
+                            text = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
+                            data = json.loads(text)
+                            if "result" in data and data["result"]:
+                                return data["result"]
+                        except Exception:
+                            continue
+                    return None
+
+                # Fetch child transaction
+                tx_info = rpc_fetch("eth_getTransactionByHash", [clean_hash])
+                if not tx_info:
+                    return {"bound": False, "reason": "Child transaction not found on-chain."}
+
+                st = tx_info.get("status_name", "") or str(tx_info.get("status", ""))
+                if st not in ["FINALIZED", "SUCCESS", "FINISHED_WITH_RETURN", "0x1", "7", 7, 1]:
+                    return {"bound": False, "reason": f"Child transaction status is {st}, not finalized."}
+
+                # Verify triggered_by exists (parent linkage must be present)
+                triggered_by = str(tx_info.get("triggered_by", "") or tx_info.get("parent_hash", "")).lower()
+                if not triggered_by or not triggered_by.startswith("0x") or len(triggered_by) < 64:
+                    return {"bound": False, "reason": "Child transaction has no parent linkage (triggered_by missing). Cannot bind."}
+
+                return {"bound": True, "reason": f"Child transfer verified as FINALIZED with parent linkage."}
+            except Exception as e:
+                return {"bound": False, "reason": f"Verification error: {str(e)}"}
+
+        def validator_fn(leader_res) -> bool:
+            if not isinstance(leader_res, gl.vm.Return):
+                return False
+            data = leader_res.calldata if hasattr(leader_res, "calldata") else leader_res
+            mine = leader_fn()
+            return mine.get("bound") == data.get("bound")
+
+        outcome = gl.vm.run_nondet(leader_fn, validator_fn)
+        if not isinstance(outcome, dict) or not outcome.get("bound"):
+            raise UserError(f"Transfer binding verification failed: {outcome.get('reason') if isinstance(outcome, dict) else 'Consensus mismatch'}")
+
+        bounty.pending_payout_hash = clean_hash
+        bounty.ai_verdict_reason += f" [Transfer {clean_hash[:10]}... bound to pending payout via consensus verification]"
+        self.bounties[bounty_id] = bounty
+
+    @gl.public.write
     def confirm_payout(self, bounty_id: str, transfer_tx_hash: str) -> None:
         """
-        SETTLEMENT FINALIZATION & LINKAGE VERIFICATION (Pavel Kolosov Mandate):
+        SETTLEMENT FINALIZATION & LINKAGE VERIFICATION (Pavel Kolosov + Gen. Dave Mandate):
+        - Requires pending_payout_hash to be bound via bind_pending_transfer first.
         - Anti-Replay: transfer_tx_hash cannot be confirmed more than once across all bounties.
-        - Unrelated Transfer Guard: verifies parent-child transfer linkage:
+        - Mandatory Parent-Child Linkage (fail-closed):
           * Child status must be FINALIZED/SUCCESS.
           * Recipient and value must match bounty parameters.
-          * Parent transaction must link from the emitting contract and reference this bounty_id.
+          * triggered_by MUST be present — skipping is NOT allowed.
+          * Parent transaction must reference this bounty_id.
         """
         if bounty_id not in self.bounties:
             raise UserError("Bounty not found")
@@ -588,12 +684,20 @@ class Contract(gl.Contract):
             raise UserError("Bounty payout is already confirmed as PAID.")
         if bounty.payout_status == "REFUNDED":
             raise UserError("Bounty escrow is already confirmed as REFUNDED.")
-        if bounty.payout_status not in ["PAYOUT_PENDING", "CLAIMABLE"]:
-            raise UserError(f"Bounty payout is not pending confirmation (current: {bounty.payout_status}).")
+        if bounty.payout_status != "PAYOUT_PENDING":
+            raise UserError(f"Bounty payout is not pending confirmation (current: {bounty.payout_status}). Must be in PAYOUT_PENDING state.")
+
+        # Gen. Dave Mandate: pending_payout_hash MUST be bound before confirmation
+        if not bounty.pending_payout_hash or bounty.pending_payout_hash == "":
+            raise UserError("No transfer hash bound to this bounty. Call bind_pending_transfer first to bind the child transfer hash.")
 
         clean_hash = transfer_tx_hash.strip().lower()
         if not clean_hash.startswith("0x") or len(clean_hash) < 64:
             raise UserError("Invalid transfer_tx_hash: must be a 32-byte hex hash (0x...).")
+
+        # Bound hash must match the provided hash
+        if clean_hash != bounty.pending_payout_hash.lower():
+            raise UserError(f"Provided hash {clean_hash[:10]}... does not match bound pending_payout_hash {bounty.pending_payout_hash[:10]}...")
 
         # Anti-Replay: prevent reuse of previously confirmed transfer hash
         if clean_hash in self.confirmed_transfers:
@@ -651,37 +755,42 @@ class Contract(gl.Contract):
                 if val < expected_val:
                     return {"verified": False, "reason": f"Value mismatch: expected {expected_val}, got {val}."}
 
-                # 2. Parent-Child Linkage Verification
+                # 2. Parent-Child Linkage Verification (MANDATORY — Gen. Dave Mandate)
+                # Fail-closed: if triggered_by is missing, verification FAILS immediately
                 triggered_by = str(tx_info.get("triggered_by", "") or tx_info.get("parent_hash", "")).lower()
-                if triggered_by and triggered_by.startswith("0x") and len(triggered_by) >= 64:
-                    parent_tx = rpc_fetch("eth_getTransactionByHash", [triggered_by])
-                    if parent_tx:
-                        parent_recipient = str(parent_tx.get("recipient", "") or parent_tx.get("to_address", "") or parent_tx.get("to", "")).lower()
-                        if from_addr and parent_recipient and from_addr != parent_recipient:
-                            return {"verified": False, "reason": f"Parent-child linkage mismatch: child sender {from_addr} != parent recipient {parent_recipient}."}
+                if not triggered_by or not triggered_by.startswith("0x") or len(triggered_by) < 64:
+                    return {"verified": False, "reason": "Child transfer has no parent linkage metadata (triggered_by missing). Cannot verify transfer origin."}
 
-                        parent_data = str(parent_tx.get("tx_data", "") or parent_tx.get("data", "") or parent_tx.get("input", "") or parent_tx.get("sim_config", "")).lower()
-                        b_hex = bounty_id.encode("utf-8").hex().lower()
-                        has_ref = (
-                            bounty_id.lower() in parent_data
-                            or b_hex in parent_data
-                            or bounty_id.replace("-", "").lower() in parent_data
-                        )
-                        if not has_ref and isinstance(parent_tx.get("data"), dict):
-                            c_b64 = str(parent_tx.get("data", {}).get("calldata", ""))
-                            if c_b64:
-                                try:
-                                    import base64
-                                    dec = base64.b64decode(c_b64).decode("latin1", errors="ignore")
-                                    if bounty_id.lower() in dec.lower():
-                                        has_ref = True
-                                except Exception:
-                                    pass
+                parent_tx = rpc_fetch("eth_getTransactionByHash", [triggered_by])
+                if not parent_tx:
+                    return {"verified": False, "reason": f"Parent transaction {triggered_by[:10]}... not found on-chain."}
 
-                        if not has_ref:
-                            return {"verified": False, "reason": f"Parent transaction does not reference bounty {bounty_id}."}
+                parent_recipient = str(parent_tx.get("recipient", "") or parent_tx.get("to_address", "") or parent_tx.get("to", "")).lower()
+                if from_addr and parent_recipient and from_addr != parent_recipient:
+                    return {"verified": False, "reason": f"Parent-child linkage mismatch: child sender {from_addr} != parent recipient {parent_recipient}."}
 
-                return {"verified": True, "reason": "Confirmed finalized outbound transfer with verified linkage."}
+                parent_data = str(parent_tx.get("tx_data", "") or parent_tx.get("data", "") or parent_tx.get("input", "") or parent_tx.get("sim_config", "")).lower()
+                b_hex = bounty_id.encode("utf-8").hex().lower()
+                has_ref = (
+                    bounty_id.lower() in parent_data
+                    or b_hex in parent_data
+                    or bounty_id.replace("-", "").lower() in parent_data
+                )
+                if not has_ref and isinstance(parent_tx.get("data"), dict):
+                    c_b64 = str(parent_tx.get("data", {}).get("calldata", ""))
+                    if c_b64:
+                        try:
+                            import base64
+                            dec = base64.b64decode(c_b64).decode("latin1", errors="ignore")
+                            if bounty_id.lower() in dec.lower():
+                                has_ref = True
+                        except Exception:
+                            pass
+
+                if not has_ref:
+                    return {"verified": False, "reason": f"Parent transaction does not reference bounty {bounty_id}."}
+
+                return {"verified": True, "reason": "Confirmed finalized outbound transfer with mandatory parent-child linkage verified."}
             except Exception as e:
                 return {"verified": False, "reason": f"Verification error: {str(e)}"}
 

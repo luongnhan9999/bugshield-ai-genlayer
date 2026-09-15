@@ -363,6 +363,7 @@ class TestSettlementAndRecoveryPath:
             last_submitter="0xhunter",
             payout_status="PAYOUT_PENDING",
             last_payout_tx="",
+            pending_payout_hash="0x" + "f" * 64,  # Must be bound for confirm_payout to proceed
         )
 
         with pytest.raises(UserError, match="Invalid transfer_tx_hash"):
@@ -391,6 +392,7 @@ class TestSettlementAndRecoveryPath:
             last_submitter="0xhunter",
             payout_status="PAYOUT_PENDING",
             last_payout_tx="",
+            pending_payout_hash=tx_hash,  # Bound to the same hash for anti-replay test
         )
 
         with pytest.raises(UserError, match="has already been confirmed"):
@@ -557,6 +559,199 @@ class TestSettlementAndRecoveryPath:
 
         with pytest.raises(UserError, match="Only the hunter who submitted the rejected patch"):
             contract.appeal_rejection("b1", "My fix is correct because...")
+
+
+class TestBindPendingTransfer:
+    """Tests for the bind_pending_transfer settlement binding method (Gen. Dave Mandate)."""
+
+    def test_bind_requires_payout_pending_status(self, contract):
+        """bind_pending_transfer must reject if bounty is not in PAYOUT_PENDING state."""
+        contract.bounties["b1"] = Bounty(
+            id="b1",
+            creator="0xcreator",
+            title="Fix",
+            target_repo_url="https://github.com/org/repo",
+            vulnerability_description="Desc",
+            expected_fix_criteria="Fix",
+            reward_amount=bigint(100),
+            status="RESOLVED",
+            winner="0xhunter",
+            ai_verdict_reason="Passed",
+            patch_pr_url="",
+            created_at=bigint(1789387200),
+            submission_count=bigint(1),
+            commit_hash="abcdef123",
+            last_submitter="0xhunter",
+            payout_status="CLAIMABLE",  # Not PAYOUT_PENDING!
+            last_payout_tx="",
+        )
+
+        with pytest.raises(UserError, match="not in PAYOUT_PENDING status"):
+            contract.bind_pending_transfer("b1", "0x" + "a" * 64)
+
+    def test_bind_rejects_already_bound_hash(self, contract):
+        """bind_pending_transfer must reject if a hash is already bound."""
+        contract.bounties["b1"] = Bounty(
+            id="b1",
+            creator="0xcreator",
+            title="Fix",
+            target_repo_url="https://github.com/org/repo",
+            vulnerability_description="Desc",
+            expected_fix_criteria="Fix",
+            reward_amount=bigint(100),
+            status="RESOLVED",
+            winner="0xhunter",
+            ai_verdict_reason="Passed",
+            patch_pr_url="",
+            created_at=bigint(1789387200),
+            submission_count=bigint(1),
+            commit_hash="abcdef123",
+            last_submitter="0xhunter",
+            payout_status="PAYOUT_PENDING",
+            last_payout_tx="",
+            pending_payout_hash="0x" + "b" * 64,  # Already bound!
+        )
+
+        with pytest.raises(UserError, match="already bound"):
+            contract.bind_pending_transfer("b1", "0x" + "a" * 64)
+
+    def test_bind_rejects_invalid_hash_format(self, contract):
+        """bind_pending_transfer must reject invalid tx hash format."""
+        contract.bounties["b1"] = Bounty(
+            id="b1",
+            creator="0xcreator",
+            title="Fix",
+            target_repo_url="https://github.com/org/repo",
+            vulnerability_description="Desc",
+            expected_fix_criteria="Fix",
+            reward_amount=bigint(100),
+            status="RESOLVED",
+            winner="0xhunter",
+            ai_verdict_reason="Passed",
+            patch_pr_url="",
+            created_at=bigint(1789387200),
+            submission_count=bigint(1),
+            commit_hash="abcdef123",
+            last_submitter="0xhunter",
+            payout_status="PAYOUT_PENDING",
+            last_payout_tx="",
+        )
+
+        with pytest.raises(UserError, match="Invalid child_tx_hash"):
+            contract.bind_pending_transfer("b1", "invalid_short")
+
+    def test_bind_anti_replay_rejects_already_confirmed(self, contract):
+        """bind_pending_transfer must reject a hash already confirmed for another bounty."""
+        tx_hash = "0x" + "c" * 64
+        contract.confirmed_transfers[tx_hash] = "bounty_other"
+
+        contract.bounties["b1"] = Bounty(
+            id="b1",
+            creator="0xcreator",
+            title="Fix",
+            target_repo_url="https://github.com/org/repo",
+            vulnerability_description="Desc",
+            expected_fix_criteria="Fix",
+            reward_amount=bigint(100),
+            status="RESOLVED",
+            winner="0xhunter",
+            ai_verdict_reason="Passed",
+            patch_pr_url="",
+            created_at=bigint(1789387200),
+            submission_count=bigint(1),
+            commit_hash="abcdef123",
+            last_submitter="0xhunter",
+            payout_status="PAYOUT_PENDING",
+            last_payout_tx="",
+        )
+
+        with pytest.raises(UserError, match="already been confirmed"):
+            contract.bind_pending_transfer("b1", tx_hash)
+
+
+class TestConfirmPayoutBindingRequirement:
+    """Tests that confirm_payout requires pending_payout_hash to be bound first (Gen. Dave Mandate)."""
+
+    def test_confirm_rejects_when_no_hash_bound(self, contract):
+        """confirm_payout must fail-closed when pending_payout_hash is empty (not bound)."""
+        contract.bounties["b1"] = Bounty(
+            id="b1",
+            creator="0xcreator",
+            title="Fix",
+            target_repo_url="https://github.com/org/repo",
+            vulnerability_description="Desc",
+            expected_fix_criteria="Fix",
+            reward_amount=bigint(100),
+            status="RESOLVED",
+            winner="0xhunter",
+            ai_verdict_reason="Passed",
+            patch_pr_url="",
+            created_at=bigint(1789387200),
+            submission_count=bigint(1),
+            commit_hash="abcdef123",
+            last_submitter="0xhunter",
+            payout_status="PAYOUT_PENDING",
+            last_payout_tx="",
+            pending_payout_hash="",  # NOT bound!
+        )
+
+        with pytest.raises(UserError, match="No transfer hash bound"):
+            contract.confirm_payout("b1", "0x" + "a" * 64)
+
+    def test_confirm_rejects_mismatched_hash(self, contract):
+        """confirm_payout must reject if provided hash doesn't match the bound pending_payout_hash."""
+        bound_hash = "0x" + "a" * 64
+        different_hash = "0x" + "b" * 64
+
+        contract.bounties["b1"] = Bounty(
+            id="b1",
+            creator="0xcreator",
+            title="Fix",
+            target_repo_url="https://github.com/org/repo",
+            vulnerability_description="Desc",
+            expected_fix_criteria="Fix",
+            reward_amount=bigint(100),
+            status="RESOLVED",
+            winner="0xhunter",
+            ai_verdict_reason="Passed",
+            patch_pr_url="",
+            created_at=bigint(1789387200),
+            submission_count=bigint(1),
+            commit_hash="abcdef123",
+            last_submitter="0xhunter",
+            payout_status="PAYOUT_PENDING",
+            last_payout_tx="",
+            pending_payout_hash=bound_hash,
+        )
+
+        with pytest.raises(UserError, match="does not match bound pending_payout_hash"):
+            contract.confirm_payout("b1", different_hash)
+
+    def test_confirm_rejects_non_payout_pending_status(self, contract):
+        """confirm_payout must reject if status is not PAYOUT_PENDING."""
+        contract.bounties["b1"] = Bounty(
+            id="b1",
+            creator="0xcreator",
+            title="Fix",
+            target_repo_url="https://github.com/org/repo",
+            vulnerability_description="Desc",
+            expected_fix_criteria="Fix",
+            reward_amount=bigint(100),
+            status="RESOLVED",
+            winner="0xhunter",
+            ai_verdict_reason="Passed",
+            patch_pr_url="",
+            created_at=bigint(1789387200),
+            submission_count=bigint(1),
+            commit_hash="abcdef123",
+            last_submitter="0xhunter",
+            payout_status="CLAIMABLE",  # Not PAYOUT_PENDING
+            last_payout_tx="",
+        )
+
+        with pytest.raises(UserError, match="not pending confirmation"):
+            contract.confirm_payout("b1", "0x" + "a" * 64)
+
 
 class TestFrontendRPCConfig:
     """Verifies that client configuration conforms to Studionet 61999 and removes mock fallbacks."""
